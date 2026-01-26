@@ -845,6 +845,261 @@ async function status(config: Config) {
 
 // --- End status command ---
 
+// --- Init command ---
+
+type InitOptions = {
+  home: string;
+  interactive?: boolean;
+  force?: boolean;
+  modules?: string[];
+};
+
+type InitResult = {
+  success: boolean;
+  dotfilesPath: string;
+  filesCreated?: string[];
+  error?: string;
+};
+
+// Starter templates
+const TEMPLATES = {
+  zshenv: `# Set ZDOTDIR for XDG-style config
+export ZDOTDIR="$HOME/.config/zsh"
+
+# Source zprofile if it exists (for login shells)
+[[ -f "$ZDOTDIR/.zprofile" ]] && source "$ZDOTDIR/.zprofile"
+`,
+
+  zprofile: `# Login shell config - runs once on login
+# Add environment variables here
+
+# Homebrew
+eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)"
+`,
+
+  zshrc: `# Interactive shell config
+
+# History
+HISTSIZE=10000
+SAVEHIST=10000
+HISTFILE="$HOME/.zsh_history"
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+
+# Prompt (customize or use starship)
+# eval "$(starship init zsh)"
+
+# Aliases
+alias ll='ls -la'
+alias ..='cd ..'
+
+# Add your customizations below
+`,
+
+  gitconfig: `[user]
+	# Set your name and email
+	# name = Your Name
+	# email = you@example.com
+
+[core]
+	editor = vim
+	excludesfile = ~/.gitignore_global
+
+[init]
+	defaultBranch = main
+
+[pull]
+	rebase = false
+
+[push]
+	default = current
+`,
+
+  brewfile: `tap "homebrew/bundle"
+
+# Core tools
+brew "git"
+brew "vim"
+
+# Add your packages below
+`,
+
+  starship: `# Starship prompt config
+# https://starship.rs/config/
+
+format = "$all"
+
+[character]
+success_symbol = "[➜](bold green)"
+error_symbol = "[➜](bold red)"
+`,
+
+  tmux: `# Tmux config
+
+# Use Ctrl-a as prefix (like screen)
+# unbind C-b
+# set -g prefix C-a
+
+# Enable mouse
+set -g mouse on
+
+# Start windows at 1
+set -g base-index 1
+`,
+};
+
+// Module definitions
+const MODULES: Record<string, { dir: string; files: Record<string, string> }> = {
+  zsh: {
+    dir: "zsh",
+    files: {
+      "zshenv": TEMPLATES.zshenv,
+      "zprofile": TEMPLATES.zprofile,
+      "zshrc": TEMPLATES.zshrc,
+      "starship.toml": TEMPLATES.starship,
+    },
+  },
+  git: {
+    dir: "git",
+    files: {
+      ".gitconfig": TEMPLATES.gitconfig,
+    },
+  },
+  homebrew: {
+    dir: "homebrew",
+    files: {
+      "brewfile": TEMPLATES.brewfile,
+    },
+  },
+  tmux: {
+    dir: "tmux",
+    files: {
+      "tmux.conf": TEMPLATES.tmux,
+    },
+  },
+};
+
+const DEFAULT_MODULES = ["zsh", "git", "homebrew"];
+
+async function initDotfiles(options: InitOptions): Promise<InitResult> {
+  const dotfilesPath = `${options.home}/.dotfiles`;
+
+  // Check if dotfiles already exists
+  const exists = await pathExists(dotfilesPath);
+  if (exists && !options.force) {
+    return {
+      success: false,
+      dotfilesPath,
+      error: `Dotfiles directory already exists at ${dotfilesPath}. Use --force to reinitialize.`,
+    };
+  }
+
+  const filesCreated: string[] = [];
+  const modulesToInit = options.modules ?? DEFAULT_MODULES;
+
+  try {
+    // Create base directory
+    await mkdir(dotfilesPath, { recursive: true });
+
+    // Create each module's files
+    for (const moduleName of modulesToInit) {
+      const module = MODULES[moduleName];
+      if (!module) {
+        console.warn(`Unknown module: ${moduleName}`);
+        continue;
+      }
+
+      const moduleDir = `${dotfilesPath}/${module.dir}`;
+      await mkdir(moduleDir, { recursive: true });
+
+      for (const [filename, content] of Object.entries(module.files)) {
+        const filePath = `${moduleDir}/${filename}`;
+
+        // Don't overwrite existing files unless force
+        if (!options.force && await pathExists(filePath)) {
+          continue;
+        }
+
+        await Bun.write(filePath, content);
+        filesCreated.push(filePath);
+      }
+    }
+
+    // Initialize git repo if not already
+    const gitDir = `${dotfilesPath}/.git`;
+    if (!await pathExists(gitDir)) {
+      const result = await $`git -C ${dotfilesPath} init`.quiet().nothrow();
+      if (result.exitCode !== 0) {
+        console.warn("Failed to initialize git repository");
+      }
+    }
+
+    return {
+      success: true,
+      dotfilesPath,
+      filesCreated,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      dotfilesPath,
+      error: error.message ?? String(error),
+    };
+  }
+}
+
+async function init(home: string, args: string[]) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      force: {
+        type: "boolean",
+        short: "f",
+        default: false,
+      },
+      yes: {
+        type: "boolean",
+        short: "y",
+        default: false,
+      },
+    },
+    strict: false,
+    allowPositionals: true,
+  });
+
+  const interactive = !values.yes;
+
+  console.log("Initializing dotfiles...\n");
+
+  const result = await initDotfiles({
+    home,
+    interactive,
+    force: values.force ?? false,
+  });
+
+  if (!result.success) {
+    console.error(`Error: ${result.error}`);
+    process.exit(1);
+  }
+
+  console.log(`✓ Created dotfiles at ${result.dotfilesPath}`);
+
+  if (result.filesCreated && result.filesCreated.length > 0) {
+    console.log("\nCreated files:");
+    for (const file of result.filesCreated) {
+      const relative = file.replace(`${result.dotfilesPath}/`, "");
+      console.log(`  ${relative}`);
+    }
+  }
+
+  console.log("\nNext steps:");
+  console.log("  1. Review and customize files in ~/.dotfiles");
+  console.log("  2. Run 'dot install' to create symlinks");
+  console.log("  3. Run 'dot doctor' to check for issues");
+}
+
+// --- End init command ---
+
 async function getRepoFiles(config: Config): Promise<string[]> {
   const output = await $`git -C ${config.dotfiles} ls-files`.text();
   return output.trim().split("\n").filter(Boolean);
@@ -1160,6 +1415,9 @@ function help() {
   console.log("Usage: dot <command>");
   console.log("");
   console.log("Commands:");
+  console.log("  init            Initialize a new dotfiles repository");
+  console.log("    --force, -f   Reinitialize even if exists");
+  console.log("    --yes, -y     Skip interactive prompts");
   console.log("  status          Show dotfiles status (quick overview)");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
@@ -1178,6 +1436,9 @@ const config = createConfig();
 const command = Bun.argv[2];
 
 switch (command) {
+  case "init":
+    await init(config.home, Bun.argv.slice(3));
+    break;
   case "status":
     await status(config);
     break;
@@ -1230,6 +1491,8 @@ export {
   type BrewfileSyncStatus,
   type HardcodedPathIssue,
   type Status,
+  type InitOptions,
+  type InitResult,
   // Constants
   REVIEW_EXPIRY_DAYS,
   DEPENDENCIES,
@@ -1244,6 +1507,7 @@ export {
   getGitStatus,
   getStatus,
   formatStatus,
+  initDotfiles,
   normalizePath,
   isReviewedRecently,
   getExpiryDate,
