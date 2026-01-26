@@ -9,6 +9,9 @@ import {
   mkdir,
   realpath,
   stat,
+  rename,
+  cp,
+  rm,
 } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
 
@@ -1256,6 +1259,157 @@ async function validate(config: Config) {
 
 // --- End validate command ---
 
+// --- Add command ---
+
+type AddOptions = {
+  force?: boolean;
+};
+
+type AddResult = {
+  success: boolean;
+  destPath?: string;
+  error?: string;
+};
+
+async function addFile(
+  config: Config,
+  sourcePath: string,
+  module: string,
+  options: AddOptions = {}
+): Promise<AddResult> {
+  // Check source exists
+  if (!await pathExists(sourcePath)) {
+    return {
+      success: false,
+      error: `Source file not found: ${sourcePath}`,
+    };
+  }
+
+  // Check dotfiles directory exists
+  if (!await pathExists(config.dotfiles)) {
+    return {
+      success: false,
+      error: `Dotfiles directory not found: ${config.dotfiles}`,
+    };
+  }
+
+  // Check if source is already a symlink
+  try {
+    const sourceStat = await lstat(sourcePath);
+    if (sourceStat.isSymbolicLink()) {
+      return {
+        success: false,
+        error: `Source is already a symlink: ${sourcePath}`,
+      };
+    }
+  } catch (e: any) {
+    return {
+      success: false,
+      error: `Cannot stat source: ${e.message}`,
+    };
+  }
+
+  // Determine destination path
+  const basename = sourcePath.split("/").pop()!;
+  const moduleDir = `${config.dotfiles}/${module}`;
+  const destPath = `${moduleDir}/${basename}`;
+
+  // Check if destination already exists
+  if (await pathExists(destPath) && !options.force) {
+    return {
+      success: false,
+      error: `Destination already exists: ${destPath}. Use --force to overwrite.`,
+    };
+  }
+
+  try {
+    // Create module directory if needed
+    await mkdir(moduleDir, { recursive: true });
+
+    // If force and destination exists, remove it first
+    if (options.force && await pathExists(destPath)) {
+      await rm(destPath, { recursive: true });
+    }
+
+    // Move file/directory to dotfiles
+    // Use rename for atomic move within same filesystem
+    try {
+      await rename(sourcePath, destPath);
+    } catch {
+      // If rename fails (cross-device), copy and delete
+      await cp(sourcePath, destPath, { recursive: true, preserveTimestamps: true });
+      await rm(sourcePath, { recursive: true });
+    }
+
+    // Create symlink from original location to new location
+    await symlink(destPath, sourcePath);
+
+    return {
+      success: true,
+      destPath,
+    };
+  } catch (e: any) {
+    return {
+      success: false,
+      error: `Failed to add file: ${e.message}`,
+    };
+  }
+}
+
+async function add(config: Config, args: string[]) {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      force: {
+        type: "boolean",
+        short: "f",
+        default: false,
+      },
+      module: {
+        type: "string",
+        short: "m",
+        default: "misc",
+      },
+    },
+    strict: false,
+    allowPositionals: true,
+  });
+
+  if (positionals.length === 0) {
+    console.log("Usage: dot add <file> [--module <module>] [--force]");
+    console.log("");
+    console.log("Move a file to dotfiles and create a symlink.");
+    console.log("");
+    console.log("Options:");
+    console.log("  --module, -m <name>  Module/directory in dotfiles (default: misc)");
+    console.log("  --force, -f          Overwrite if destination exists");
+    console.log("");
+    console.log("Examples:");
+    console.log("  dot add ~/.npmrc");
+    console.log("  dot add ~/.config/nvim --module nvim");
+    process.exit(1);
+  }
+
+  const sourcePath = normalizePath(config.home, positionals[0]!);
+  const module = (values.module as string) ?? "misc";
+
+  console.log(`Adding ${sourcePath} to dotfiles/${module}...`);
+
+  const result = await addFile(config, sourcePath, module, {
+    force: values.force ?? false,
+  });
+
+  if (!result.success) {
+    console.error(`Error: ${result.error}`);
+    process.exit(1);
+  }
+
+  console.log(`✓ Moved to ${result.destPath}`);
+  console.log(`✓ Created symlink at ${sourcePath}`);
+}
+
+// --- End add command ---
+
 async function getRepoFiles(config: Config): Promise<string[]> {
   const output = await $`git -C ${config.dotfiles} ls-files`.text();
   return output.trim().split("\n").filter(Boolean);
@@ -1579,6 +1733,8 @@ function help() {
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");
+  console.log("  add <file>      Move file to dotfiles and create symlink");
+  console.log("    --module, -m  Module/directory (default: misc)");
   console.log("  sync            Update brewfile and show git status");
   console.log(
     "  doctor          Analyze dotfiles with Claude and suggest fixes",
@@ -1601,6 +1757,9 @@ switch (command) {
     break;
   case "validate":
     await validate(config);
+    break;
+  case "add":
+    await add(config, Bun.argv.slice(3));
     break;
   case "install": {
     const { force } = parseInstallArgs();
@@ -1656,6 +1815,8 @@ export {
   type ValidationResult,
   type ValidationError,
   type ValidationWarning,
+  type AddResult,
+  type AddOptions,
   // Constants
   REVIEW_EXPIRY_DAYS,
   DEPENDENCIES,
@@ -1673,6 +1834,7 @@ export {
   initDotfiles,
   validateConfig,
   formatValidationResult,
+  addFile,
   normalizePath,
   isReviewedRecently,
   getExpiryDate,
