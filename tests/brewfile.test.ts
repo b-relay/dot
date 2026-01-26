@@ -1,4 +1,7 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseBrewfile,
   getInstalledPackages,
@@ -9,8 +12,37 @@ import {
 } from "../index";
 
 describe("parseBrewfile", () => {
-  // Create a test config pointing to the real dotfiles
-  const config = createConfig();
+  let tmpDir: string;
+  let config: Config;
+
+  // Mock brewfile content for testing
+  const mockBrewfile = `tap "homebrew/bundle"
+
+# Fast Node manager
+brew "fnm"
+# Cross-shell prompt
+brew "starship"
+# Fuzzy finder
+brew "fzf"
+# Bun JavaScript runtime
+brew "oven-sh/bun/bun"
+
+# Terminal emulator
+cask "iterm2"
+# Code editor
+cask "visual-studio-code"
+`;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dot-brewfile-test-"));
+    await mkdir(`${tmpDir}/.dotfiles/homebrew`, { recursive: true });
+    await writeFile(`${tmpDir}/.dotfiles/homebrew/brewfile`, mockBrewfile);
+    config = createConfig(tmpDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true });
+  });
 
   test("parses standard brew formula lines", async () => {
     const packages = await parseBrewfile(config);
