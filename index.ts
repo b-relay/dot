@@ -1410,6 +1410,97 @@ async function add(config: Config, args: string[]) {
 
 // --- End add command ---
 
+// --- List command ---
+
+type LinkInfo = {
+  source: string;
+  target: string;
+  module: string;
+  sourceExists: boolean;
+  status: "valid" | "broken" | "missing" | "wrong-target" | "not-symlink";
+};
+
+async function listLinks(config: Config): Promise<LinkInfo[]> {
+  const symlinkStatus = await getSymlinkStatus(config);
+
+  return Promise.all(
+    symlinkStatus.map(async (s): Promise<LinkInfo> => {
+      // Extract module from source path
+      // e.g., /home/user/.dotfiles/zsh/zshenv -> "zsh"
+      const pathParts = s.source.split("/");
+      const dotfilesIdx = pathParts.indexOf(".dotfiles");
+      const module = dotfilesIdx >= 0 && pathParts[dotfilesIdx + 1]
+        ? pathParts[dotfilesIdx + 1]
+        : "unknown";
+
+      return {
+        source: s.source,
+        target: s.target,
+        module,
+        sourceExists: await pathExists(s.source),
+        status: s.status,
+      };
+    })
+  );
+}
+
+function formatLinkList(links: LinkInfo[]): string {
+  const lines: string[] = [];
+
+  // Group by module
+  const byModule = new Map<string, LinkInfo[]>();
+  for (const link of links) {
+    const existing = byModule.get(link.module) ?? [];
+    existing.push(link);
+    byModule.set(link.module, existing);
+  }
+
+  // Sort modules alphabetically
+  const sortedModules = [...byModule.keys()].sort();
+
+  for (const module of sortedModules) {
+    lines.push(`${module}/`);
+
+    const moduleLinks = byModule.get(module)!;
+    for (const link of moduleLinks) {
+      const basename = link.source.split("/").pop() ?? link.source;
+      const statusIcon = getStatusIcon(link);
+      lines.push(`  ${statusIcon} ${basename} -> ${link.target}`);
+    }
+
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function getStatusIcon(link: LinkInfo): string {
+  if (!link.sourceExists) return "⊘"; // Source missing
+  switch (link.status) {
+    case "valid": return "✓";
+    case "broken": return "✗";
+    case "missing": return "○";
+    case "wrong-target": return "⚠";
+    case "not-symlink": return "■";
+    default: return "?";
+  }
+}
+
+async function list(config: Config) {
+  const links = await listLinks(config);
+  console.log("Managed files:\n");
+  console.log(formatLinkList(links));
+
+  // Summary
+  const valid = links.filter(l => l.status === "valid").length;
+  const missing = links.filter(l => l.status === "missing").length;
+  const broken = links.filter(l => !l.sourceExists).length;
+
+  console.log(`Total: ${links.length} links (${valid} installed, ${missing} pending, ${broken} source missing)`);
+}
+
+// --- End list command ---
+
 async function getRepoFiles(config: Config): Promise<string[]> {
   const output = await $`git -C ${config.dotfiles} ls-files`.text();
   return output.trim().split("\n").filter(Boolean);
@@ -1729,6 +1820,7 @@ function help() {
   console.log("    --force, -f   Reinitialize even if exists");
   console.log("    --yes, -y     Skip interactive prompts");
   console.log("  status          Show dotfiles status (quick overview)");
+  console.log("  list            Show all managed files by module");
   console.log("  validate        Check configuration before install");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
@@ -1754,6 +1846,9 @@ switch (command) {
     break;
   case "status":
     await status(config);
+    break;
+  case "list":
+    await list(config);
     break;
   case "validate":
     await validate(config);
@@ -1817,6 +1912,7 @@ export {
   type ValidationWarning,
   type AddResult,
   type AddOptions,
+  type LinkInfo,
   // Constants
   REVIEW_EXPIRY_DAYS,
   DEPENDENCIES,
@@ -1835,6 +1931,8 @@ export {
   validateConfig,
   formatValidationResult,
   addFile,
+  listLinks,
+  formatLinkList,
   normalizePath,
   isReviewedRecently,
   getExpiryDate,
