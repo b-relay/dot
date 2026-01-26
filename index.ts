@@ -1100,6 +1100,162 @@ async function init(home: string, args: string[]) {
 
 // --- End init command ---
 
+// --- Validate command ---
+
+type ValidationError = {
+  type: "missing-source" | "missing-dotfiles" | "target-conflict";
+  path?: string;
+  message: string;
+};
+
+type ValidationWarning = {
+  type: "wrong-target" | "broken-link";
+  path?: string;
+  message: string;
+};
+
+type ValidationResult = {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+  totalLinks: number;
+  validLinks: number;
+  missingSourceCount: number;
+};
+
+async function validateConfig(config: Config): Promise<ValidationResult> {
+  const errors: ValidationError[] = [];
+  const warnings: ValidationWarning[] = [];
+
+  // Check if dotfiles directory exists
+  if (!await pathExists(config.dotfiles)) {
+    errors.push({
+      type: "missing-dotfiles",
+      path: config.dotfiles,
+      message: `Dotfiles directory not found: ${config.dotfiles}`,
+    });
+
+    return {
+      valid: false,
+      errors,
+      warnings,
+      totalLinks: Object.keys(config.links).length,
+      validLinks: 0,
+      missingSourceCount: 0,
+    };
+  }
+
+  let validLinks = 0;
+  let missingSourceCount = 0;
+
+  for (const [source, target] of Object.entries(config.links)) {
+    // Check if source file exists
+    const sourceExists = await pathExists(source);
+    if (!sourceExists) {
+      missingSourceCount++;
+      errors.push({
+        type: "missing-source",
+        path: source,
+        message: `Source file missing: ${source}`,
+      });
+      continue;
+    }
+
+    // Check target status
+    try {
+      const targetStat = await lstat(target);
+
+      if (targetStat.isSymbolicLink()) {
+        // It's a symlink - check if it points to the right place
+        const dest = await resolveSymlinkTarget(target);
+        if (await linksToExpectedResolved(dest, source)) {
+          // Correct symlink
+          if (await pathExists(dest)) {
+            validLinks++;
+          } else {
+            warnings.push({
+              type: "broken-link",
+              path: target,
+              message: `Symlink exists but source is broken: ${target}`,
+            });
+          }
+        } else {
+          warnings.push({
+            type: "wrong-target",
+            path: target,
+            message: `Symlink points to wrong target: ${target} -> ${dest} (expected ${source})`,
+          });
+        }
+      } else {
+        // Target exists and is not a symlink - conflict
+        errors.push({
+          type: "target-conflict",
+          path: target,
+          message: `Target exists and is not a symlink: ${target}`,
+        });
+      }
+    } catch {
+      // Target doesn't exist - OK for install
+      validLinks++; // Count as valid since source exists and target is available
+    }
+  }
+
+  const valid = errors.length === 0;
+
+  return {
+    valid,
+    errors,
+    warnings,
+    totalLinks: Object.keys(config.links).length,
+    validLinks,
+    missingSourceCount,
+  };
+}
+
+function formatValidationResult(result: ValidationResult): string {
+  const lines: string[] = [];
+
+  if (result.valid) {
+    lines.push("✓ Configuration valid");
+  } else {
+    lines.push("✗ Configuration has issues");
+  }
+
+  lines.push("");
+  lines.push(`Links: ${result.validLinks}/${result.totalLinks} ready`);
+
+  if (result.errors.length > 0) {
+    lines.push("");
+    lines.push("Errors:");
+    for (const error of result.errors) {
+      lines.push(`  ✗ ${error.message}`);
+    }
+  }
+
+  if (result.warnings.length > 0) {
+    lines.push("");
+    lines.push("Warnings:");
+    for (const warning of result.warnings) {
+      lines.push(`  ⚠ ${warning.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function validate(config: Config) {
+  console.log("Validating configuration...\n");
+
+  const result = await validateConfig(config);
+  console.log(formatValidationResult(result));
+
+  if (!result.valid) {
+    process.exit(1);
+  }
+}
+
+// --- End validate command ---
+
 async function getRepoFiles(config: Config): Promise<string[]> {
   const output = await $`git -C ${config.dotfiles} ls-files`.text();
   return output.trim().split("\n").filter(Boolean);
@@ -1419,6 +1575,7 @@ function help() {
   console.log("    --force, -f   Reinitialize even if exists");
   console.log("    --yes, -y     Skip interactive prompts");
   console.log("  status          Show dotfiles status (quick overview)");
+  console.log("  validate        Check configuration before install");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");
@@ -1441,6 +1598,9 @@ switch (command) {
     break;
   case "status":
     await status(config);
+    break;
+  case "validate":
+    await validate(config);
     break;
   case "install": {
     const { force } = parseInstallArgs();
@@ -1493,6 +1653,9 @@ export {
   type Status,
   type InitOptions,
   type InitResult,
+  type ValidationResult,
+  type ValidationError,
+  type ValidationWarning,
   // Constants
   REVIEW_EXPIRY_DAYS,
   DEPENDENCIES,
@@ -1508,6 +1671,8 @@ export {
   getStatus,
   formatStatus,
   initDotfiles,
+  validateConfig,
+  formatValidationResult,
   normalizePath,
   isReviewedRecently,
   getExpiryDate,
