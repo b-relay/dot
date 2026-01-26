@@ -721,6 +721,130 @@ async function getSymlinkStatus(config: Config): Promise<SymlinkStatus[]> {
   return results;
 }
 
+// --- Status command ---
+
+type Status = {
+  installed: boolean;
+  linksTotal: number;
+  linksValid: number;
+  linksBroken: number;
+  linksMissing: number;
+  linksWrongTarget: number;
+  linksNotSymlink: number;
+  dotfilesPath: string;
+  dotfilesExists: boolean;
+  isGitRepo: boolean;
+  gitBranch?: string;
+  gitDirty?: boolean;
+};
+
+async function getStatus(config: Config): Promise<Status> {
+  const dotfilesExists = await pathExists(config.dotfiles);
+  const isGitRepo = dotfilesExists && await pathExists(`${config.dotfiles}/.git`);
+
+  // Get symlink status
+  const symlinkStatus = await getSymlinkStatus(config);
+
+  const linksTotal = symlinkStatus.length;
+  const linksValid = symlinkStatus.filter(s => s.status === "valid").length;
+  const linksBroken = symlinkStatus.filter(s => s.status === "broken").length;
+  const linksMissing = symlinkStatus.filter(s => s.status === "missing").length;
+  const linksWrongTarget = symlinkStatus.filter(s => s.status === "wrong-target").length;
+  const linksNotSymlink = symlinkStatus.filter(s => s.status === "not-symlink").length;
+
+  // Consider "installed" if majority of links are valid
+  const installed = linksValid > 0 && linksValid >= linksTotal / 2;
+
+  // Get git info if available
+  let gitBranch: string | undefined;
+  let gitDirty: boolean | undefined;
+
+  if (isGitRepo) {
+    try {
+      const branchResult = await $`git -C ${config.dotfiles} branch --show-current`.quiet().nothrow();
+      if (branchResult.exitCode === 0) {
+        gitBranch = branchResult.text().trim();
+      }
+
+      const statusResult = await $`git -C ${config.dotfiles} status --porcelain`.quiet().nothrow();
+      if (statusResult.exitCode === 0) {
+        gitDirty = statusResult.text().trim().length > 0;
+      }
+    } catch {
+      // Ignore git errors
+    }
+  }
+
+  return {
+    installed,
+    linksTotal,
+    linksValid,
+    linksBroken,
+    linksMissing,
+    linksWrongTarget,
+    linksNotSymlink,
+    dotfilesPath: config.dotfiles,
+    dotfilesExists,
+    isGitRepo,
+    gitBranch,
+    gitDirty,
+  };
+}
+
+function formatStatus(status: Status): string {
+  const lines: string[] = [];
+
+  // Header
+  if (status.installed) {
+    lines.push("✓ dotfiles installed");
+  } else {
+    lines.push("✗ dotfiles not installed");
+  }
+
+  lines.push("");
+
+  // Location
+  lines.push(`Location: ${status.dotfilesPath}`);
+  if (!status.dotfilesExists) {
+    lines.push("  (directory does not exist)");
+  }
+
+  // Git status
+  if (status.isGitRepo) {
+    const gitLine = status.gitBranch
+      ? `Git: ${status.gitBranch}${status.gitDirty ? " (dirty)" : ""}`
+      : "Git: yes";
+    lines.push(gitLine);
+  }
+
+  lines.push("");
+
+  // Symlink summary
+  lines.push(`Symlinks: ${status.linksValid}/${status.linksTotal} valid`);
+
+  if (status.linksBroken > 0) {
+    lines.push(`  ${status.linksBroken} broken (source file missing)`);
+  }
+  if (status.linksMissing > 0) {
+    lines.push(`  ${status.linksMissing} missing (need install)`);
+  }
+  if (status.linksWrongTarget > 0) {
+    lines.push(`  ${status.linksWrongTarget} wrong target`);
+  }
+  if (status.linksNotSymlink > 0) {
+    lines.push(`  ${status.linksNotSymlink} blocked by existing files`);
+  }
+
+  return lines.join("\n");
+}
+
+async function status(config: Config) {
+  const s = await getStatus(config);
+  console.log(formatStatus(s));
+}
+
+// --- End status command ---
+
 async function getRepoFiles(config: Config): Promise<string[]> {
   const output = await $`git -C ${config.dotfiles} ls-files`.text();
   return output.trim().split("\n").filter(Boolean);
@@ -1036,6 +1160,7 @@ function help() {
   console.log("Usage: dot <command>");
   console.log("");
   console.log("Commands:");
+  console.log("  status          Show dotfiles status (quick overview)");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");
@@ -1053,6 +1178,9 @@ const config = createConfig();
 const command = Bun.argv[2];
 
 switch (command) {
+  case "status":
+    await status(config);
+    break;
   case "install": {
     const { force } = parseInstallArgs();
     if (await preflightCheck(force)) {
@@ -1101,6 +1229,7 @@ export {
   type BrewfilePackage,
   type BrewfileSyncStatus,
   type HardcodedPathIssue,
+  type Status,
   // Constants
   REVIEW_EXPIRY_DAYS,
   DEPENDENCIES,
@@ -1113,6 +1242,8 @@ export {
   isPathManaged,
   getRepoFiles,
   getGitStatus,
+  getStatus,
+  formatStatus,
   normalizePath,
   isReviewedRecently,
   getExpiryDate,
