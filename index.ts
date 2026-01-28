@@ -11,6 +11,7 @@ import {
   stat,
 } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
+import { configureLogging, getLogger } from "./src/lib/logger.js";
 
 const REVIEW_EXPIRY_DAYS = 90;
 
@@ -1050,6 +1051,8 @@ function help() {
 
 // CLI entry point
 const config = createConfig();
+await configureLogging(config.dotfiles);
+const logger = getLogger(["cli"]);
 const command = Bun.argv[2];
 
 switch (command) {
