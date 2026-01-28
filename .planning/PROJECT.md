@@ -64,6 +64,7 @@ Run one command on a fresh Mac and get a working, configured dev environment wit
 - Windows support — not the target platform
 - Non-interactive batch mode — wizard is the interface
 - Supporting arbitrary dotfiles layouts — opinionated about structure
+- Bash or other shell support — zsh only, keeps scope focused
 
 ## Context
 

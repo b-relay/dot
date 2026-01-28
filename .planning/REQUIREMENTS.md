@@ -27,7 +27,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Shell Configuration
 
-- [ ] **SHELL-01**: Detect current shell setup (zsh/bash, existing config files)
+- [ ] **SHELL-01**: Detect current zsh setup (existing config files, plugin managers)
 - [ ] **SHELL-02**: Organize zsh config into proper file layout (.zshenv, .zprofile, .zshrc)
 - [ ] **SHELL-03**: Generate shell configs from templates with architecture-aware paths
 - [ ] **SHELL-04**: Configure starship prompt with theme selection

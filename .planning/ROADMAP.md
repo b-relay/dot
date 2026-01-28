@@ -53,11 +53,11 @@ Plans:
 - [ ] TBD during planning
 
 ### Phase 3: Shell Configuration
-**Goal**: Shell (zsh/bash) is properly configured with organized files, starship prompt, and user-selected plugins.
+**Goal**: zsh is properly configured with organized files, starship prompt, and user-selected plugins.
 **Depends on**: Phase 2
 **Requirements**: SHELL-01, SHELL-02, SHELL-03, SHELL-04, SHELL-05, SHELL-06
 **Success Criteria** (what must be TRUE):
-  1. Current shell setup is detected (zsh/bash, existing config files, plugin managers)
+  1. Current zsh setup is detected (existing config files, plugin managers)
   2. zsh config files are organized into proper layout (.zshenv in ~/, .zprofile/.zshrc in ZDOTDIR)
   3. Shell configs are generated from templates with architecture-specific paths (no hardcoded /opt/homebrew)
   4. Starship prompt is configured with user-selected theme
