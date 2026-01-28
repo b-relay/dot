@@ -95,7 +95,7 @@ function parseInstallArgs(): InstallOptions {
   });
 
   return {
-    force: values.force ?? false,
+    force: Boolean(values.force),
   };
 }
 
