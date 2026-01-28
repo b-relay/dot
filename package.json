@@ -12,5 +12,9 @@
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@logtape/logtape": "^2.0.2",
+    "write-file-atomic": "^7.0.0"
   }
 }
