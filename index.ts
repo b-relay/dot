@@ -593,6 +593,9 @@ function normalizePath(home: string, inputPath: string): string {
 }
 
 async function install(config: Config) {
+  // Configure logging for this dotfiles directory
+  await configureLogging(config.dotfiles);
+
   const logger = getLogger(["install"]);
   const backupDir = `${config.dotfiles}/.backups`;
   const statePath = `${config.dotfiles}/.install-state.json`;
