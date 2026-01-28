@@ -12,6 +12,8 @@ import {
 } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
 import { configureLogging, getLogger } from "./src/lib/logger.js";
+import { backupFile, loadBackupManifest, saveBackupManifest, type BackupManifest } from "./src/lib/backup.js";
+import { loadState, saveState, createInitialState, markStepComplete, isStepComplete, type InstallState } from "./src/lib/state.js";
 
 const REVIEW_EXPIRY_DAYS = 90;
 
@@ -591,9 +593,39 @@ function normalizePath(home: string, inputPath: string): string {
 }
 
 async function install(config: Config) {
+  const logger = getLogger(["install"]);
+  const backupDir = `${config.dotfiles}/.backups`;
+  const statePath = `${config.dotfiles}/.install-state.json`;
+  const manifestPath = `${backupDir}/.backup-manifest.json`;
+
+  // Load or create state
+  let state = await loadState(statePath);
+  if (!state || state.status === 'completed') {
+    state = createInitialState(Object.keys(config.links).length);
+    await saveState(statePath, state);
+    logger.info("Starting fresh installation", { totalSteps: state.totalSteps });
+  } else {
+    logger.info("Resuming installation", {
+      completed: state.completedSteps.length,
+      total: state.totalSteps
+    });
+  }
+
+  // Load backup manifest
+  const manifest = await loadBackupManifest(manifestPath);
+
   console.log("Installing dotfiles...");
 
   for (const [source, target] of Object.entries(config.links)) {
+    const stepId = `symlink:${target}`;
+
+    // Skip if already complete
+    if (isStepComplete(state, stepId)) {
+      logger.debug("Skipping completed step", { stepId, target });
+      console.log(`  [skip] ${target} (already done)`);
+      continue;
+    }
+
     await mkdir(dirname(target), { recursive: true });
 
     try {
@@ -603,25 +635,56 @@ async function install(config: Config) {
         if (await linksToExpectedResolved(dest, source)) {
           console.log(`  [skip] ${target} (already correct)`);
         } else {
-          console.log(`  [warn] ${target} points to ${dest}, expected ${source}`);
+          // Wrong target - backup then replace
+          await backupFile(target, backupDir, manifest);
+          await saveBackupManifest(manifestPath, manifest);
+          await unlink(target);
+          await symlink(source, target);
+          logger.info("Replaced symlink", { target, oldDest: dest, newSource: source });
+          console.log(`  [replace] ${target} -> ${source}`);
         }
       } else {
-        console.log(`  [warn] ${target} exists and is not a symlink`);
+        // File exists but not symlink - backup then replace
+        await backupFile(target, backupDir, manifest);
+        await saveBackupManifest(manifestPath, manifest);
+        await unlink(target);
+        await symlink(source, target);
+        logger.info("Replaced file with symlink", { target, source });
+        console.log(`  [backup+link] ${target} -> ${source}`);
       }
     } catch {
       // Target doesn't exist - check source exists before creating symlink
       if (!(await pathExists(source))) {
+        logger.warn("Skipping missing source", { target, source });
         console.log(`  [warn] ${target} skipped (source ${source} does not exist)`);
         continue;
       }
       await symlink(source, target);
+      logger.info("Created symlink", { target, source });
       console.log(`  [link] ${target} -> ${source}`);
     }
+
+    // Checkpoint after each successful step
+    state = markStepComplete(state, stepId);
+    await saveState(statePath, state);
   }
+
+  // Mark complete
+  state = { ...state, status: 'completed' };
+  await saveState(statePath, state);
+
+  logger.info("Installation complete", {
+    totalSteps: state.totalSteps,
+    backedUp: manifest.backups.length
+  });
 
   console.log("Done!");
   console.log("\nTo apply changes, run: exec zsh");
   console.log("Or open a new terminal window.");
+
+  if (manifest.backups.length > 0) {
+    console.log(`\nBacked up ${manifest.backups.length} file(s) to ${backupDir}`);
+  }
 }
 
 async function uninstall(config: Config) {
