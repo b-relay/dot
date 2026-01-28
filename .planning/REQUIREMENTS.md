@@ -9,12 +9,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Foundation
 
-- [ ] **FOUND-01**: Backup existing configs before any destructive operation (timestamped, restorable)
-- [ ] **FOUND-02**: Run preflight dependency checks before touching any files
-- [ ] **FOUND-03**: Operations are idempotent (safe to re-run, same result)
-- [ ] **FOUND-04**: Track installation state for interrupted install recovery
-- [ ] **FOUND-05**: Log all operations for audit trail (what changed, when, status)
-- [ ] **FOUND-06**: Detect architecture (ARM vs Intel) and use correct Homebrew paths
+- [x] **FOUND-01**: Backup existing configs before any destructive operation (timestamped, restorable)
+- [x] **FOUND-02**: Run preflight dependency checks before touching any files
+- [x] **FOUND-03**: Operations are idempotent (safe to re-run, same result)
+- [x] **FOUND-04**: Track installation state for interrupted install recovery
+- [x] **FOUND-05**: Log all operations for audit trail (what changed, when, status)
+- [x] **FOUND-06**: Detect architecture (ARM vs Intel) and use correct Homebrew paths
 
 ### Interactive Setup
 
@@ -100,12 +100,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | Phase 1 | Pending |
-| FOUND-02 | Phase 1 | Pending |
-| FOUND-03 | Phase 1 | Pending |
-| FOUND-04 | Phase 1 | Pending |
-| FOUND-05 | Phase 1 | Pending |
-| FOUND-06 | Phase 1 | Pending |
+| FOUND-01 | Phase 1 | Complete |
+| FOUND-02 | Phase 1 | Complete |
+| FOUND-03 | Phase 1 | Complete |
+| FOUND-04 | Phase 1 | Complete |
+| FOUND-05 | Phase 1 | Complete |
+| FOUND-06 | Phase 1 | Complete |
 | SETUP-01 | Phase 2 | Pending |
 | SETUP-02 | Phase 2 | Pending |
 | SETUP-03 | Phase 2 | Pending |
