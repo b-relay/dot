@@ -9,6 +9,7 @@ import {
   unlink,
   lstat,
   chmod,
+  readdir,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -779,7 +780,7 @@ describe("install edge cases", () => {
     expect(status.every(s => s.status === "missing")).toBe(true);
   });
 
-  test("does not overwrite existing regular files", async () => {
+  test("backs up and replaces existing regular files", async () => {
     // Create source file
     await writeFile(`${tmpDir}/.dotfiles/zsh/zshenv`, "source");
     // Create target as regular file
@@ -787,9 +788,22 @@ describe("install edge cases", () => {
 
     await install(config);
 
-    // The regular file should still exist with original content
+    // The regular file should be replaced with symlink
+    const linkStat = await lstat(`${tmpDir}/.zshenv`);
+    expect(linkStat.isSymbolicLink()).toBe(true);
+
+    // Original content should be backed up
+    const backupDir = `${tmpDir}/.dotfiles/.backups`;
+    const backupFiles = await readdir(backupDir);
+    const zshenvBackups = backupFiles.filter(f => f.startsWith(".zshenv.") && f.endsWith(".backup"));
+    expect(zshenvBackups.length).toBe(1);
+
+    const backupContent = await readFile(`${backupDir}/${zshenvBackups[0]}`, "utf-8");
+    expect(backupContent).toBe("existing content");
+
+    // New content should be from source
     const content = await readFile(`${tmpDir}/.zshenv`, "utf-8");
-    expect(content).toBe("existing content");
+    expect(content).toBe("source");
   });
 
   test("creates parent directories for nested targets", async () => {
@@ -826,5 +840,231 @@ describe("special path handling", () => {
     const file = `${tmpDir}/文件.txt`;
     await writeFile(file, "content");
     expect(await pathExists(file)).toBe(true);
+  });
+});
+
+describe("install safety features", () => {
+  let tmpDir: string;
+  let config: Config;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dot-safety-"));
+
+    // Create test directory structure
+    await mkdir(`${tmpDir}/.dotfiles/zsh`, { recursive: true });
+    await mkdir(`${tmpDir}/.dotfiles/git`, { recursive: true });
+
+    // Create source files
+    await writeFile(`${tmpDir}/.dotfiles/zsh/zshenv`, "# zshenv source");
+    await writeFile(`${tmpDir}/.dotfiles/git/.gitconfig`, "# gitconfig source");
+
+    config = createConfig(tmpDir);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true });
+  });
+
+  test("backs up existing file before replacing", async () => {
+    // Create an existing file at target location
+    const targetPath = `${tmpDir}/.zshenv`;
+    const originalContent = "# existing zshenv content";
+    await writeFile(targetPath, originalContent);
+
+    // Run install
+    await install(config);
+
+    // Verify: symlink was created
+    const linkStat = await lstat(targetPath);
+    expect(linkStat.isSymbolicLink()).toBe(true);
+
+    // Verify: backup exists
+    const backupDir = `${tmpDir}/.dotfiles/.backups`;
+    const backupFiles = await readdir(backupDir);
+    const zshenvBackups = backupFiles.filter(f => f.startsWith(".zshenv.") && f.endsWith(".backup"));
+    expect(zshenvBackups.length).toBe(1);
+
+    // Verify: backup contains original content
+    const backupPath = `${backupDir}/${zshenvBackups[0]}`;
+    const backupContent = await readFile(backupPath, "utf-8");
+    expect(backupContent).toBe(originalContent);
+
+    // Verify: symlink points to correct source
+    const content = await readFile(targetPath, "utf-8");
+    expect(content).toBe("# zshenv source");
+  });
+
+  test("creates state file during operation", async () => {
+    await install(config);
+
+    // Verify: state file exists
+    const statePath = `${tmpDir}/.dotfiles/.install-state.json`;
+    expect(await pathExists(statePath)).toBe(true);
+
+    // Verify: state file has correct structure
+    const stateContent = await readFile(statePath, "utf-8");
+    const state = JSON.parse(stateContent);
+    expect(state.version).toBe("1");
+    expect(state.status).toBe("completed");
+    expect(state.completedSteps.length).toBeGreaterThan(0);
+    expect(state.totalSteps).toBeGreaterThan(0);
+  });
+
+  test("resumes from checkpoint after interruption", async () => {
+    // Create a partial state file (simulate interrupted install)
+    const statePath = `${tmpDir}/.dotfiles/.install-state.json`;
+    const partialState = {
+      version: "1",
+      startedAt: new Date().toISOString(),
+      completedSteps: [`symlink:${tmpDir}/.zshenv`],
+      totalSteps: Object.keys(config.links).length,
+      status: "in-progress"
+    };
+    await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
+    await writeFile(statePath, JSON.stringify(partialState, null, 2));
+
+    // Create the symlink that was "already done"
+    await symlink(`${tmpDir}/.dotfiles/zsh/zshenv`, `${tmpDir}/.zshenv`);
+
+    // Run install (should resume)
+    await install(config);
+
+    // Verify: completed state
+    const stateContent = await readFile(statePath, "utf-8");
+    const state = JSON.parse(stateContent);
+    expect(state.status).toBe("completed");
+
+    // Verify: zshenv step is still in completed steps (was already done)
+    expect(state.completedSteps).toContain(`symlink:${tmpDir}/.zshenv`);
+
+    // Verify: gitconfig step was added (new work)
+    expect(state.completedSteps).toContain(`symlink:${tmpDir}/.config/git/config`);
+
+    // Verify: total completed is 2 (zshenv and gitconfig, others have missing sources)
+    expect(state.completedSteps.length).toBe(2);
+
+    // Verify: the "already done" symlink wasn't recreated
+    const zshenvStat = await lstat(`${tmpDir}/.zshenv`);
+    expect(zshenvStat.isSymbolicLink()).toBe(true);
+  });
+
+  test("install is idempotent", async () => {
+    // Run install twice
+    await install(config);
+    await install(config);
+
+    // Verify: all symlinks still valid
+    const status = await getSymlinkStatus(config);
+    const validLinks = status.filter(s => s.status === "valid");
+    expect(validLinks.length).toBeGreaterThan(0);
+
+    // Verify: no duplicate backups were created
+    const backupDir = `${tmpDir}/.dotfiles/.backups`;
+    try {
+      const backupFiles = await readdir(backupDir);
+      // Should have no backups (no files were replaced on second run)
+      expect(backupFiles.filter(f => f.endsWith(".backup")).length).toBe(0);
+    } catch (error) {
+      // Backup dir might not exist if no backups needed (also acceptable)
+      expect((error as NodeJS.ErrnoException).code).toBe("ENOENT");
+    }
+  });
+
+  test("backup manifest tracks all backups", async () => {
+    // Create multiple existing files
+    await writeFile(`${tmpDir}/.zshenv`, "original zshenv");
+    await mkdir(`${tmpDir}/.config/git`, { recursive: true });
+    await writeFile(`${tmpDir}/.config/git/config`, "original gitconfig");
+
+    // Run install
+    await install(config);
+
+    // Verify: manifest exists and contains both backups
+    const manifestPath = `${tmpDir}/.dotfiles/.backups/.backup-manifest.json`;
+    const manifestContent = await readFile(manifestPath, "utf-8");
+    const manifest = JSON.parse(manifestContent);
+
+    expect(manifest.backups.length).toBe(2);
+    expect(manifest.backups.some((b: any) => b.original.endsWith(".zshenv"))).toBe(true);
+    expect(manifest.backups.some((b: any) => b.original.includes("git/config"))).toBe(true);
+
+    // Verify: all backup entries have required fields
+    for (const backup of manifest.backups) {
+      expect(backup.original).toBeDefined();
+      expect(backup.backup).toBeDefined();
+      expect(backup.timestamp).toBeDefined();
+    }
+  });
+
+  test("state checkpoints after each symlink", async () => {
+    // Create source files for a subset of links
+    const targetPaths = Object.values(config.links);
+
+    await install(config);
+
+    // Verify: state file exists
+    const statePath = `${tmpDir}/.dotfiles/.install-state.json`;
+    const stateContent = await readFile(statePath, "utf-8");
+    const state = JSON.parse(stateContent);
+
+    // Verify: completed steps match number of symlinks created
+    expect(state.completedSteps.length).toBeGreaterThan(0);
+
+    // Verify: all completed step IDs follow the format "symlink:{target}"
+    for (const stepId of state.completedSteps) {
+      expect(stepId).toMatch(/^symlink:/);
+      const target = stepId.replace(/^symlink:/, "");
+      expect(targetPaths.some(t => t === target)).toBe(true);
+    }
+  });
+
+  test("logs operations to .dot-operations.jsonl", async () => {
+    await install(config);
+
+    // Verify: log file exists
+    const logPath = `${tmpDir}/.dotfiles/.dot-operations.jsonl`;
+    expect(await pathExists(logPath)).toBe(true);
+
+    // Verify: log file contains JSON Lines entries
+    const logContent = await readFile(logPath, "utf-8");
+    const lines = logContent.trim().split("\n").filter(Boolean);
+    expect(lines.length).toBeGreaterThan(0);
+
+    // Verify: each line is valid JSON with expected fields
+    for (const line of lines) {
+      const entry = JSON.parse(line);
+      // LogTape JSON format includes these fields
+      expect(entry.level).toBeDefined();
+      expect(entry.logger).toBeDefined();
+      expect(entry.message).toBeDefined();
+    }
+
+    // Verify: contains install-related log entries
+    const installLogs = lines.filter(line => {
+      const entry = JSON.parse(line);
+      return entry.logger && entry.logger.includes("install");
+    });
+    expect(installLogs.length).toBeGreaterThan(0);
+  });
+
+  test("handles replacing wrong-target symlinks", async () => {
+    // Create a symlink pointing to the wrong place
+    const wrongTarget = `${tmpDir}/wrong-file`;
+    await writeFile(wrongTarget, "wrong content");
+    await symlink(wrongTarget, `${tmpDir}/.zshenv`);
+
+    // Run install
+    await install(config);
+
+    // Verify: symlink now points to correct source
+    const linkStat = await lstat(`${tmpDir}/.zshenv`);
+    expect(linkStat.isSymbolicLink()).toBe(true);
+    const content = await readFile(`${tmpDir}/.zshenv`, "utf-8");
+    expect(content).toBe("# zshenv source");
+
+    // Verify: old symlink target was backed up
+    const backupDir = `${tmpDir}/.dotfiles/.backups`;
+    const backupFiles = await readdir(backupDir);
+    expect(backupFiles.filter(f => f.startsWith(".zshenv.") && f.endsWith(".backup")).length).toBe(1);
   });
 });

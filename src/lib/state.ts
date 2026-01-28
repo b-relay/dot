@@ -1,5 +1,6 @@
 import writeFileAtomic from "write-file-atomic";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { getLogger } from "./logger.js";
 
 const logger = getLogger(["state"]);
@@ -40,6 +41,9 @@ export async function loadState(statePath: string): Promise<InstallState | null>
  */
 export async function saveState(statePath: string, state: InstallState): Promise<void> {
   try {
+    // Ensure parent directory exists
+    await mkdir(dirname(statePath), { recursive: true });
+
     await writeFileAtomic(statePath, JSON.stringify(state, null, 2) + "\n", {
       encoding: "utf-8",
       fsync: true,  // Ensure write reaches disk
