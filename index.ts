@@ -472,6 +472,15 @@ async function scanForHardcodedPaths(config: Config): Promise<HardcodedPathIssue
   }
 
   // Patterns to detect
+  // NOTE: This simple regex matching doesn't distinguish between:
+  // - Hardcoded usage: export PATH="/opt/homebrew/bin:$PATH" (SHOULD flag)
+  // - Conditional detection: if [[ -f /opt/homebrew/bin/brew ]] (should NOT flag)
+  // Current behavior: flags ALL occurrences on wrong architecture.
+  // This is acceptable because:
+  // 1. Our portable zprofile uses /opt/homebrew/bin/brew and /usr/local/bin/brew
+  //    for detection, which don't match the /usr/local/(Cellar|opt) pattern
+  // 2. False positives only occur on Intel Macs with our portable conditionals
+  // Future improvement: Add context-aware detection to recognize conditional patterns
   const appleOnlyPattern = /\/opt\/homebrew/;
   const intelOnlyPattern = /\/usr\/local\/(Cellar|opt)/;
 
