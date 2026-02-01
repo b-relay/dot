@@ -139,13 +139,13 @@ export async function move(
   const symlinksToUpdate: { target: string; oldSource: string; newSource: string }[] = [];
 
   for (const [source, target] of Object.entries(config.links)) {
-    // Source paths in config are relative to dotfiles root
-    // Extract the relative part from source (assumes source starts with dotfiles path)
-    const relSource = relative(resolvedCurrentPath, source);
-    const oldSource = resolve(resolvedCurrentPath, relSource);
-    const newSource = resolve(resolvedNewPath, relSource);
+    // Source paths in config are relative to dotfiles root (e.g., "zsh/zshrc")
+    // Target paths use ~ notation (e.g., "~/.config/zsh/.zshrc")
+    const oldSource = resolve(resolvedCurrentPath, source);
+    const newSource = resolve(resolvedNewPath, source);
+    const expandedTarget = expandPath(target);
 
-    symlinksToUpdate.push({ target, oldSource, newSource });
+    symlinksToUpdate.push({ target: expandedTarget, oldSource, newSource });
   }
 
   // 4. Preview changes
