@@ -26,6 +26,8 @@ export type DetectedDotfile = {
   fileCount?: number;     // For directories: number of files inside
   warning?: string;       // Warning message (e.g., for .ssh/config)
   status?: DotfileStatus; // Status relative to dotfiles repo
+  annotation?: string;    // Annotation for low-value files (e.g., "cache file", "history")
+  isLowValue?: boolean;   // Flag for grouping (low-value files shown separately)
 };
 
 /**
@@ -984,11 +986,13 @@ function getWarning(relativePath: string): string | undefined {
  * Returns array of detected dotfiles with metadata and status.
  *
  * @param extraSkipPatterns Additional patterns to skip (from config)
+ * @param customPatterns Optional custom patterns for low-value/high-value classification
  */
 export async function scanCommonDotfiles(
   home: string,
   dotfilesPath?: string,
-  extraSkipPatterns: string[] = []
+  extraSkipPatterns: string[] = [],
+  customPatterns?: CustomPatterns
 ): Promise<DetectedDotfile[]> {
   const found: DetectedDotfile[] = [];
   const skipHome = new Set([...SKIP_HOME_DOTFILES, ...extraSkipPatterns]);
@@ -1040,12 +1044,17 @@ export async function scanCommonDotfiles(
       .map(info => info.sourcePath)
   );
 
-  // Helper to add a detected file
+  // Helper to add a detected file with low-value annotation
   const addDetected = async (
     fullPath: string,
     relativePath: string,
     symlinkInfo?: DiscoveredSymlink
   ) => {
+    // Check if this is a low-value file (for annotation)
+    const fileName = basename(relativePath);
+    const lowValue = isLowValueFile(fileName, customPatterns);
+    const annotation = lowValue ? getLowValueAnnotation(fileName) : undefined;
+
     // If it's a symlink to our repo
     if (symlinkInfo) {
       const actualRelativePath = getRelativeRepoPath(symlinkInfo.sourcePath, dotfilesPath!);
@@ -1060,6 +1069,8 @@ export async function scanCommonDotfiles(
         fileCount,
         warning: getWarning(relativePath),
         status: symlinkInfo.targetExists ? 'already-linked' : 'broken-link',
+        annotation,
+        isLowValue: lowValue,
       });
       return;
     }
@@ -1098,6 +1109,8 @@ export async function scanCommonDotfiles(
         fileCount,
         warning: getWarning(relativePath),
         status,
+        annotation,
+        isLowValue: lowValue,
       });
     } else {
       found.push({
@@ -1108,6 +1121,8 @@ export async function scanCommonDotfiles(
         fileCount,
         warning: getWarning(relativePath),
         status: 'available',
+        annotation,
+        isLowValue: lowValue,
       });
     }
   };
@@ -1167,6 +1182,9 @@ export async function scanCommonDotfiles(
       const nameRelativeToHome = relative(home, symlinkPath);
       const suggestedRelativeToRepo = getRelativeRepoPath(info.sourcePath, dotfilesPath);
       const isDir = info.targetExists ? await isDirectory(info.sourcePath) : false;
+      const fileName = basename(nameRelativeToHome);
+      const lowValue = isLowValueFile(fileName, customPatterns);
+      const annotation = lowValue ? getLowValueAnnotation(fileName) : undefined;
 
       found.push({
         path: symlinkPath,
@@ -1176,6 +1194,8 @@ export async function scanCommonDotfiles(
         isDirectory: isDir,
         warning: getWarning(nameRelativeToHome),
         status: info.targetExists ? 'already-linked' : 'broken-link',
+        annotation,
+        isLowValue: lowValue,
       });
     }
   }

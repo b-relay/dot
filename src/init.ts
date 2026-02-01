@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { loadState, saveState } from "./state";
 import { loadConfig, writeConfig } from "./config";
 import * as p from '@clack/prompts';
+import pc from 'picocolors';
 import {
   promptDotfilesLocation,
   scanCommonDotfiles,
@@ -256,7 +257,7 @@ async function initImpl(options: InitOptions): Promise<void> {
     const s = p.spinner();
     s.start('Scanning for dotfiles and configs...');
     const extraIgnore = [...(config?.ignorePatterns ?? []), ...(options.ignore ?? [])];
-    const foundDotfiles = await scanCommonDotfiles(home, dotfilesPath, extraIgnore);
+    const foundDotfiles = await scanCommonDotfiles(home, dotfilesPath, extraIgnore, config?.customPatterns);
     s.stop('Scan complete');
 
     // Categorize by status
@@ -331,26 +332,104 @@ async function initImpl(options: InitOptions): Promise<void> {
     } else {
       p.log.step(`Available to migrate (${available.length}):`);
 
-      // Convert to selectable items with file count hints for folders
-      const selectableItems = available.map(df => {
-        let text = df.name;
-        let description = df.warning ?? `-> ${df.suggested}`;
+      // Separate valuable from low-value files
+      const valuable = available.filter(df => !df.isLowValue);
+      const lowValue = available.filter(df => df.isLowValue);
+      const COLLAPSE_THRESHOLD = 5;
+
+      // Build main selection options - valuable files first
+      const mainOptions: Array<{ value: string; label: string; hint?: string }> = [];
+
+      for (const df of valuable) {
+        let label = df.name;
+        let hint = df.warning ?? `-> ${df.suggested}`;
         if (df.isDirectory && df.fileCount !== undefined) {
-          text += `/ (${df.fileCount} ${df.fileCount === 1 ? 'item' : 'items'})`;
-          description = 'select to review contents';
+          label += `/ (${df.fileCount} ${df.fileCount === 1 ? 'item' : 'items'})`;
+          hint = 'select to review contents';
         }
-        return {
-          text,
-          description,
-          ...df,
-        };
-      });
+        mainOptions.push({
+          value: df.name,
+          label,
+          hint,
+        });
+      }
+
+      // Handle low-value files based on count
+      if (lowValue.length > COLLAPSE_THRESHOLD) {
+        // Add a "show more" option for collapsed low-value files
+        mainOptions.push({
+          value: '__show_more__',
+          label: pc.dim(`Show ${lowValue.length} more files...`),
+          hint: pc.dim('cache, history, temp files'),
+        });
+      } else if (lowValue.length > 0) {
+        // Add low-value files directly (dimmed) if <= threshold
+        for (const df of lowValue) {
+          let label = df.name;
+          let hint = df.annotation ?? 'may not be worth tracking';
+          if (df.isDirectory && df.fileCount !== undefined) {
+            label += `/ (${df.fileCount} ${df.fileCount === 1 ? 'item' : 'items'})`;
+          }
+          mainOptions.push({
+            value: df.name,
+            label: pc.dim(label),
+            hint: pc.dim(hint),
+          });
+        }
+      }
+
+      // Create a map for quick lookup
+      const dfByName = new Map(available.map(df => [df.name, df]));
 
       // Multi-select which ones to migrate
-      let initialSelection = await selectItems(selectableItems, {
-        headerText: "Select dotfiles to migrate",
-        multi: true,
-      }) as DetectedDotfile[];
+      const mainSelected = await p.multiselect({
+        message: 'Select dotfiles to migrate',
+        options: mainOptions,
+        required: false,
+      });
+
+      if (p.isCancel(mainSelected)) throw new UserCancelledError();
+
+      let initialSelection: DetectedDotfile[] = [];
+
+      // Check if user selected __show_more__
+      if ((mainSelected as string[]).includes('__show_more__')) {
+        // Get main selections (excluding the marker)
+        const mainNames = (mainSelected as string[]).filter(s => s !== '__show_more__');
+        initialSelection = mainNames.map(name => dfByName.get(name)!).filter(Boolean);
+
+        // Show second selection for low-value files
+        p.log.info('These files are typically caches, history, or temp files:');
+
+        const lowValueOptions = lowValue.map(df => {
+          let label = df.name;
+          let hint = df.annotation ?? 'may not be worth tracking';
+          if (df.isDirectory && df.fileCount !== undefined) {
+            label += `/ (${df.fileCount} ${df.fileCount === 1 ? 'item' : 'items'})`;
+          }
+          return {
+            value: df.name,
+            label,
+            hint,
+          };
+        });
+
+        const lowValueSelected = await p.multiselect({
+          message: 'Select any you want to track anyway:',
+          options: lowValueOptions,
+          required: false,
+        });
+
+        if (!p.isCancel(lowValueSelected)) {
+          const lowValueNames = lowValueSelected as string[];
+          const selectedLowValue = lowValueNames.map(name => dfByName.get(name)!).filter(Boolean);
+          initialSelection = [...initialSelection, ...selectedLowValue];
+        }
+      } else {
+        // No show more selected, just use main selections
+        const selectedNames = mainSelected as string[];
+        initialSelection = selectedNames.map(name => dfByName.get(name)!).filter(Boolean);
+      }
 
       // Helper to handle a folder selection recursively
       async function handleFolder(df: DetectedDotfile): Promise<DetectedDotfile[]> {
@@ -475,12 +554,30 @@ async function initImpl(options: InitOptions): Promise<void> {
     // Ask about autoCommit
     const autoCommit = await confirm("Enable auto-commit when tracking new files?");
 
+    // Ask about brewfile exclusions
+    p.log.info("When running 'dot sync', some package types can be excluded from your brewfile.");
+    console.log("  Examples:");
+    console.log("    vscode - VS Code extensions (vscode \"extension-name\")");
+    console.log("    mas    - Mac App Store apps (mas \"Xcode\")");
+    console.log("");
+
+    const configureBrewfile = await confirm("Exclude VS Code extensions from brewfile sync?");
+
+    let brewfileConfig: { path: string; exclude: string[] } | undefined;
+    if (configureBrewfile) {
+      brewfileConfig = {
+        path: "homebrew/brewfile",
+        exclude: ["vscode"],
+      };
+    }
+
     // Build links from selected + already-tracked dotfiles
     const links = buildLinksFromDotfiles(allToLink, dotfilesPath);
 
     config = {
       links,
       autoCommit,
+      ...(brewfileConfig && { brewfile: brewfileConfig }),
     };
 
     // Write config
