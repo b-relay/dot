@@ -580,10 +580,10 @@ export async function promptDotfilesLocation(): Promise<string> {
   const defaultPath = `${home}/.dotfiles`;
 
   const result = await p.select({
-    message: 'Where are your dotfiles?',
+    message: 'Where should the dotfiles repo be located?',
     options: [
-      { value: 'default', label: defaultPath, hint: 'default location' },
-      { value: 'browse', label: 'Browse for location', hint: 'navigate directories' },
+      { value: 'default', label: defaultPath, hint: 'will be created if needed' },
+      { value: 'browse', label: 'Choose a different location', hint: 'browse or create folder' },
     ],
   });
 
