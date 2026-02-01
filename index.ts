@@ -17,6 +17,8 @@ import { track, parseTrackArgs } from "./src/track";
 import type { TrackOptions } from "./src/track";
 import { init, parseInitArgs } from "./src/init";
 import type { InitOptions } from "./src/init";
+import { move } from "./src/move";
+import type { MoveOptions } from "./src/move";
 import type { DotConfig, LinkMap, DotState } from "./src/types";
 
 const REVIEW_EXPIRY_DAYS = 90;
@@ -130,6 +132,33 @@ function parseInstallArgs(): InstallOptions {
     values.force === true || values.force === "true";
 
   return { force };
+}
+
+type ParsedMoveArgs = {
+  targetPath: string | undefined;
+  options: MoveOptions;
+};
+
+export function parseMoveArgs(args: string[]): ParsedMoveArgs {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      force: {
+        type: "boolean",
+        short: "f",
+        default: false,
+      },
+    },
+    strict: false,
+    allowPositionals: true,
+  });
+
+  const force = values.force === true || values.force === "true";
+
+  return {
+    targetPath: positionals[0],
+    options: { force },
+  };
 }
 
 type InitResult = {
@@ -1154,6 +1183,8 @@ function help() {
   console.log("  track <path>    Add file to dotfiles repo and create symlink");
   console.log("    --as <path>   Specify destination path in repo (e.g., --as zsh/aliases)");
   console.log("    --force, -f   Skip confirmations");
+  console.log("  move <path>     Relocate dotfiles folder to new location");
+  console.log("    --force, -f   Override if destination exists");
 }
 
 // CLI entry point
@@ -1250,6 +1281,38 @@ async function main() {
       await track(targetPath, dotfilesPath, dotConfig, trackOptions);
       break;
     }
+    case "move": {
+      // Parse move-specific args (everything after "move")
+      const moveIdx = args.indexOf("move");
+      const moveArgs = moveIdx >= 0 ? args.slice(moveIdx + 1) : [];
+      const { targetPath: newPath, options: moveOptions } = parseMoveArgs(moveArgs);
+
+      if (!newPath) {
+        console.log("Usage: dot move <path> [--force]");
+        console.log("");
+        console.log("Relocate dotfiles folder to a new location.");
+        console.log("All symlinks will be updated to point to the new location.");
+        console.log("");
+        console.log("Options:");
+        console.log("  --force, -f   Override if destination exists");
+        console.log("");
+        console.log("Examples:");
+        console.log("  dot move ~/dotfiles");
+        console.log("  dot move /path/to/new/location --force");
+        process.exit(1);
+      }
+
+      // Check if running from inside dotfiles folder
+      const cwd = process.cwd();
+      if (cwd.startsWith(dotfilesPath) || cwd === dotfilesPath) {
+        console.log("Warning: You are running this command from inside the dotfiles folder.");
+        console.log("After the move, your current directory will become invalid.");
+        console.log("");
+      }
+
+      await move(newPath, dotfilesPath, dotConfig, moveOptions);
+      break;
+    }
     default:
       console.error(`Unknown command: ${command}`);
       help();
@@ -1278,8 +1341,10 @@ export const __test = {
 export { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
 export { getDotfilesPath, loadState, saveState } from "./src/state";
 export { track, parseTrackArgs } from "./src/track";
+export { move } from "./src/move";
 export type { DotConfig, LinkMap, DotState } from "./src/types";
 export type { TrackOptions } from "./src/track";
+export type { MoveOptions } from "./src/move";
 
 // Exports for testing
 export {
