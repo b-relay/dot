@@ -11,6 +11,7 @@ import {
   previewSymlinks,
   confirm,
   buildLinksFromDotfiles,
+  resolveUnlinkedFiles,
   UserCancelledError,
   intro,
   outro,
@@ -263,12 +264,34 @@ async function initImpl(options: InitOptions): Promise<void> {
       }
     }
 
+    // Handle in-repo files that appear unlinked
+    let resolvedInRepo = inRepo;
     if (inRepo.length > 0) {
       p.log.info(`Available in repo - not yet linked (${inRepo.length}):`);
-      console.log("  These files exist in your dotfiles repo but don't have symlinks yet.");
-      console.log("  They will be included in your config for linking.\n");
+      console.log("  These files exist in your dotfiles repo but don't have symlinks yet.\n");
       for (const df of inRepo) {
         console.log(`  ${df.suggested} -> ${df.name}`);
+      }
+      console.log('');
+
+      // Offer to resolve manually if user has symlinks in unusual locations
+      resolvedInRepo = await resolveUnlinkedFiles(inRepo, dotfilesPath);
+
+      // Separate out any that were resolved as already-linked
+      const nowLinked = resolvedInRepo.filter(df => df.status === 'already-linked');
+      const stillUnlinked = resolvedInRepo.filter(df => df.status !== 'already-linked');
+
+      if (nowLinked.length > 0) {
+        // Move resolved files to alreadyLinked category
+        alreadyLinked.push(...nowLinked);
+        resolvedInRepo = stillUnlinked;
+
+        if (stillUnlinked.length > 0) {
+          p.log.info(`Still unlinked (${stillUnlinked.length}):`);
+          for (const df of stillUnlinked) {
+            console.log(`  ${df.suggested} -> ${df.name}`);
+          }
+        }
       }
     }
 
@@ -305,7 +328,7 @@ async function initImpl(options: InitOptions): Promise<void> {
 
     // 5. Generate config
     // Include in-repo files (they need symlinks) and already-linked files (preserve existing config)
-    const allToLink = [...selectedDotfiles, ...inRepo, ...alreadyLinked];
+    const allToLink = [...selectedDotfiles, ...resolvedInRepo, ...alreadyLinked];
 
     // Ask about autoCommit
     const autoCommit = await confirm("Enable auto-commit when tracking new files?");

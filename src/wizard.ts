@@ -298,6 +298,55 @@ function getRelativeRepoPath(absolutePath: string, dotfilesPath: string): string
 }
 
 /**
+ * Recursively scan a directory for symlinks pointing into the dotfiles repo.
+ * Returns a Map of symlink path -> source path in repo.
+ */
+async function scanDirectoryForSymlinks(
+  dir: string,
+  dotfilesPath: string,
+  maxDepth: number = 4,
+  currentDepth: number = 0
+): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+
+  if (currentDepth >= maxDepth) return found;
+
+  try {
+    const entries = await readdir(dir);
+    for (const entry of entries) {
+      const fullPath = `${dir}/${entry}`;
+      try {
+        const entryStat = await lstat(fullPath);
+
+        if (entryStat.isSymbolicLink()) {
+          const source = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
+          if (source) {
+            found.set(fullPath, source);
+          }
+        } else if (entryStat.isDirectory() && !entry.startsWith('.git')) {
+          // Recurse into subdirectory (skip .git directories)
+          const subFound = await scanDirectoryForSymlinks(
+            fullPath,
+            dotfilesPath,
+            maxDepth,
+            currentDepth + 1
+          );
+          for (const [k, v] of subFound) {
+            found.set(k, v);
+          }
+        }
+      } catch {
+        // Ignore permission errors on individual entries
+      }
+    }
+  } catch {
+    // Ignore permission errors on directory
+  }
+
+  return found;
+}
+
+/**
  * Scan home directory for common dotfiles.
  * If dotfilesPath is provided, determines status of each file relative to the repo.
  * Returns array of detected dotfiles with metadata and status.
@@ -313,7 +362,7 @@ export async function scanCommonDotfiles(
   const alreadyLinkedSources = new Set<string>();
 
   if (dotfilesPath) {
-    // Scan COMMON_DOTFILES paths
+    // Scan COMMON_DOTFILES paths (depth 1 for home root dotfiles)
     for (const entry of COMMON_DOTFILES) {
       const fullPath = resolve(home, entry.path);
       const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
@@ -322,38 +371,12 @@ export async function scanCommonDotfiles(
       }
     }
 
-    // Also scan ~/.config subdirectories for symlinks
-    // This catches symlinks like ~/.config/zsh/.zshrc that aren't in COMMON_DOTFILES
+    // Recursively scan ~/.config with depth 4 to catch deeply nested symlinks
+    // like ~/.config/zsh/.zshrc, ~/.config/Code/User/settings.json, etc.
     const configPath = `${home}/.config`;
-    try {
-      const configDirs = await readdir(configPath);
-      for (const dir of configDirs) {
-        const subDirPath = `${configPath}/${dir}`;
-        try {
-          const subDirStat = await lstat(subDirPath);
-          if (subDirStat.isDirectory()) {
-            // Scan files in this subdirectory
-            const subFiles = await readdir(subDirPath);
-            for (const file of subFiles) {
-              const fullPath = `${subDirPath}/${file}`;
-              const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
-              if (actualSourcePath) {
-                alreadyLinkedSources.add(actualSourcePath);
-              }
-            }
-          } else if (subDirStat.isSymbolicLink()) {
-            // The directory entry itself might be a symlink
-            const actualSourcePath = await getSymlinkSourceInRepo(subDirPath, dotfilesPath);
-            if (actualSourcePath) {
-              alreadyLinkedSources.add(actualSourcePath);
-            }
-          }
-        } catch {
-          // Ignore errors reading subdirectory
-        }
-      }
-    } catch {
-      // Ignore if .config doesn't exist
+    const configSymlinks = await scanDirectoryForSymlinks(configPath, dotfilesPath, 4);
+    for (const source of configSymlinks.values()) {
+      alreadyLinkedSources.add(source);
     }
   }
 
@@ -632,4 +655,95 @@ export function outro(message: string): void {
  */
 export function cancel(message: string): void {
   p.cancel(message);
+}
+
+/**
+ * Prompt user to resolve "in-repo but not linked" files.
+ * Offers options to continue (files really are unlinked) or manually specify symlink paths.
+ * Returns the resolved dotfiles with updated status and sourcePath.
+ */
+export async function resolveUnlinkedFiles(
+  unlinkedFiles: DetectedDotfile[],
+  dotfilesPath: string
+): Promise<DetectedDotfile[]> {
+  if (unlinkedFiles.length === 0) {
+    return [];
+  }
+
+  const result = await p.select({
+    message: 'Some files appear unlinked. Options:',
+    options: [
+      { value: 'continue', label: 'Continue', hint: 'these really are not linked yet' },
+      { value: 'manual', label: 'Add manual paths', hint: 'I have symlinks in other locations' },
+    ],
+  });
+
+  checkCancel(result);
+
+  if (result === 'continue') {
+    return unlinkedFiles;
+  }
+
+  // Manual mode: let user specify symlink path for each file
+  const resolved: DetectedDotfile[] = [];
+
+  for (const df of unlinkedFiles) {
+    const expectedSource = `${dotfilesPath}/${df.suggested}`;
+
+    p.log.info(`File: ${df.suggested}`);
+    console.log(`  Expected to link to: ${df.name}`);
+
+    const pathResult = await p.text({
+      message: `Symlink path (or press Enter to skip):`,
+      placeholder: '~/.config/...',
+      validate: async (value) => {
+        if (!value || !value.trim()) {
+          return undefined; // Allow empty to skip
+        }
+
+        // Expand ~ and resolve path
+        const expandedPath = expandPath(value.trim());
+
+        // Check if it exists
+        try {
+          const pathStat = await lstat(expandedPath);
+          if (!pathStat.isSymbolicLink()) {
+            return 'Path exists but is not a symlink';
+          }
+
+          // Check if it points to the expected source
+          const target = await readlink(expandedPath);
+          const resolvedTarget = resolve(dirname(expandedPath), target);
+          if (resolvedTarget !== expectedSource) {
+            return `Symlink points to ${resolvedTarget}, expected ${expectedSource}`;
+          }
+
+          return undefined; // Valid
+        } catch {
+          return 'Path does not exist';
+        }
+      },
+    });
+
+    checkCancel(pathResult);
+
+    const pathValue = (pathResult as string)?.trim();
+
+    if (!pathValue) {
+      // User skipped - keep as in-repo
+      resolved.push(df);
+    } else {
+      // User provided valid symlink path - mark as already-linked
+      const expandedPath = expandPath(pathValue);
+      resolved.push({
+        ...df,
+        path: expandedPath,
+        sourcePath: expectedSource,
+        status: 'already-linked',
+      });
+      p.log.success(`Linked: ${df.suggested} <- ${formatPath(expandedPath)}`);
+    }
+  }
+
+  return resolved;
 }
