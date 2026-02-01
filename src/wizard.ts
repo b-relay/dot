@@ -313,12 +313,47 @@ export async function scanCommonDotfiles(
   const alreadyLinkedSources = new Set<string>();
 
   if (dotfilesPath) {
+    // Scan COMMON_DOTFILES paths
     for (const entry of COMMON_DOTFILES) {
       const fullPath = resolve(home, entry.path);
       const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
       if (actualSourcePath) {
         alreadyLinkedSources.add(actualSourcePath);
       }
+    }
+
+    // Also scan ~/.config subdirectories for symlinks
+    // This catches symlinks like ~/.config/zsh/.zshrc that aren't in COMMON_DOTFILES
+    const configPath = `${home}/.config`;
+    try {
+      const configDirs = await readdir(configPath);
+      for (const dir of configDirs) {
+        const subDirPath = `${configPath}/${dir}`;
+        try {
+          const subDirStat = await lstat(subDirPath);
+          if (subDirStat.isDirectory()) {
+            // Scan files in this subdirectory
+            const subFiles = await readdir(subDirPath);
+            for (const file of subFiles) {
+              const fullPath = `${subDirPath}/${file}`;
+              const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
+              if (actualSourcePath) {
+                alreadyLinkedSources.add(actualSourcePath);
+              }
+            }
+          } else if (subDirStat.isSymbolicLink()) {
+            // The directory entry itself might be a symlink
+            const actualSourcePath = await getSymlinkSourceInRepo(subDirPath, dotfilesPath);
+            if (actualSourcePath) {
+              alreadyLinkedSources.add(actualSourcePath);
+            }
+          }
+        } catch {
+          // Ignore errors reading subdirectory
+        }
+      }
+    } catch {
+      // Ignore if .config doesn't exist
     }
   }
 
