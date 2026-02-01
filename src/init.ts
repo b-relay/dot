@@ -487,13 +487,12 @@ async function initImpl(options: InitOptions): Promise<void> {
   if (statusCode === 0) {
     const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
     if (statusOutput.trim()) {
-      console.log("\nUncommitted changes in repo:");
-      console.log(statusOutput);
-
-      if (await confirm("Create initial commit?")) {
+      // If autoCommit is enabled, just commit. Otherwise ask.
+      const shouldCommit = config?.autoCommit ?? await confirm("Create initial commit?");
+      if (shouldCommit) {
         await $`git -C ${dotfilesPath} add -A`.quiet();
         await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
-        console.log("Created initial commit.");
+        p.log.success("Created initial commit");
       }
     }
   }
@@ -519,11 +518,12 @@ async function initImpl(options: InitOptions): Promise<void> {
       // Then create symlinks
       await installLinks(config!.links);
 
-      // Commit migrated files if autoCommit enabled
-      if (config!.autoCommit && selectedDotfiles.length > 0) {
+      // Commit migrated files
+      if (selectedDotfiles.length > 0) {
         const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
         if (statusOutput.trim()) {
-          if (await confirm("Commit migrated files?")) {
+          const shouldCommit = config!.autoCommit || await confirm("Commit migrated files?");
+          if (shouldCommit) {
             await $`git -C ${dotfilesPath} add -A`.quiet();
             await $`git -C ${dotfilesPath} commit -m "Add migrated dotfiles via dot init"`.quiet();
             p.log.success("Committed migrated files");
