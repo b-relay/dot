@@ -579,17 +579,53 @@ export async function promptDotfilesLocation(): Promise<string> {
   const home = process.env.HOME ?? '';
   const defaultPath = `${home}/.dotfiles`;
 
-  const result = await p.select({
-    message: 'Where should the dotfiles repo be located?',
+  // First ask if they have an existing repo
+  const hasExisting = await p.select({
+    message: 'Do you have an existing dotfiles repo?',
     options: [
-      { value: 'default', label: defaultPath, hint: 'will be created if needed' },
+      { value: 'yes', label: 'Yes, use my existing dotfiles', hint: 'browse to find it' },
+      { value: 'no', label: 'No, create a new one', hint: 'start fresh' },
+    ],
+  });
+
+  checkCancel(hasExisting);
+
+  if (hasExisting === 'yes') {
+    // Check if default location exists
+    const defaultExists = await pathExists(defaultPath);
+
+    if (defaultExists) {
+      const useDefault = await p.select({
+        message: 'Where is your dotfiles repo?',
+        options: [
+          { value: 'default', label: defaultPath, hint: 'found existing folder' },
+          { value: 'browse', label: 'Somewhere else', hint: 'browse to find it' },
+        ],
+      });
+
+      checkCancel(useDefault);
+
+      if (useDefault === 'default') {
+        return defaultPath;
+      }
+    }
+
+    p.log.info('Browse to your existing dotfiles folder');
+    return browseDirectory(home);
+  }
+
+  // Create new - ask where
+  const location = await p.select({
+    message: 'Where should the new dotfiles repo be created?',
+    options: [
+      { value: 'default', label: defaultPath, hint: 'recommended' },
       { value: 'browse', label: 'Choose a different location', hint: 'browse or create folder' },
     ],
   });
 
-  checkCancel(result);
+  checkCancel(location);
 
-  if (result === 'browse') {
+  if (location === 'browse') {
     return browseDirectory(home);
   }
 
