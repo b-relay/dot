@@ -246,12 +246,27 @@ function createConfig(dotfilesPath: string, links: LinkMap, home?: string): Conf
     throw new Error("HOME environment variable is not set");
   }
   const dotconfig = `${resolvedHome}/.config`;
+
+  // Resolve link paths: source relative to dotfiles, target with ~ expanded
+  const resolvedLinks: Record<string, string> = {};
+  for (const [source, target] of Object.entries(links)) {
+    // Resolve source path relative to dotfiles root
+    const resolvedSource = isAbsolute(source) ? source : resolve(dotfilesPath, source);
+    // Expand ~ in target path
+    const resolvedTarget = target.startsWith("~/")
+      ? resolve(resolvedHome, target.slice(2))
+      : target.startsWith("~")
+        ? resolvedHome
+        : target;
+    resolvedLinks[resolvedSource] = resolvedTarget;
+  }
+
   return {
     dotfiles: dotfilesPath,
     dotconfig,
     home: resolvedHome,
     reviewedFile: `${dotfilesPath}/.doctor-reviewed.json`,
-    links,
+    links: resolvedLinks,
   };
 }
 
