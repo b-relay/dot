@@ -4,13 +4,23 @@ import {
   getInstalledPackages,
   checkBrewfileSync,
   createConfig,
+  getLegacyLinks,
   type BrewfilePackage,
   type Config,
 } from "../index";
 
+// Helper for integration tests using real dotfiles
+function createRealConfig(): Config {
+  const home = process.env.HOME!;
+  const dotfiles = `${home}/.dotfiles`;
+  const dotconfig = `${home}/.config`;
+  const links = getLegacyLinks(dotfiles, home, dotconfig);
+  return createConfig(dotfiles, links, home);
+}
+
 describe("parseBrewfile", () => {
   // Create a test config pointing to the real dotfiles
-  const config = createConfig();
+  const config = createRealConfig();
 
   test("parses standard brew formula lines", async () => {
     const packages = await parseBrewfile(config);
@@ -113,7 +123,7 @@ describe("getInstalledPackages", () => {
 });
 
 describe("checkBrewfileSync", () => {
-  const config = createConfig();
+  const config = createRealConfig();
 
   test("returns BrewfileSyncStatus with both arrays", async () => {
     const status = await checkBrewfileSync(config);

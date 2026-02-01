@@ -11,6 +11,9 @@ import {
   stat,
 } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
+import { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
+import { getDotfilesPath, loadState, saveState } from "./src/state";
+import type { DotConfig, LinkMap, DotState } from "./src/types";
 
 const REVIEW_EXPIRY_DAYS = 90;
 
@@ -76,6 +79,31 @@ type InstallOptions = {
   force: boolean;
 };
 
+type GlobalOptions = {
+  dotfiles?: string;
+};
+
+function parseGlobalArgs(): GlobalOptions {
+  // Bun.argv: [bun-path, script-path, ...args]
+  // Look for global flags before the command
+  const args = Bun.argv.slice(2);
+
+  const { values } = parseArgs({
+    args,
+    options: {
+      dotfiles: {
+        type: "string",
+      },
+    },
+    strict: false,
+    allowPositionals: true,
+  });
+
+  return {
+    dotfiles: values.dotfiles as string | undefined,
+  };
+}
+
 function parseInstallArgs(): InstallOptions {
   // Bun.argv: [bun-path, script-path, command, ...args]
   // Slice to get just the args after "install"
@@ -100,28 +128,88 @@ function parseInstallArgs(): InstallOptions {
   return { force };
 }
 
-function createConfig(home?: string): Config {
+type InitResult = {
+  dotfilesPath: string;
+  config: DotConfig;
+};
+
+/**
+ * Initialize dot CLI by discovering dotfiles path and loading config.
+ *
+ * Priority for dotfiles path:
+ * 1. --dotfiles flag
+ * 2. DOT_HOME env var
+ * 3. State file (~/.config/dot/state.json)
+ * 4. Default to ~/.dotfiles if it exists (backward compat)
+ *
+ * @returns Config and dotfiles path, or null if not configured
+ */
+async function initializeDot(options: GlobalOptions): Promise<InitResult | null> {
+  const home = Bun.env.HOME;
+  if (!home) {
+    throw new Error("HOME environment variable is not set");
+  }
+  const dotconfig = `${home}/.config`;
+
+  // Get dotfiles path from priority chain
+  let dotfilesPath = await getDotfilesPath({ dotfiles: options.dotfiles });
+
+  // Backward compatibility: if no path found, check if ~/.dotfiles exists
+  if (!dotfilesPath) {
+    const defaultPath = `${home}/.dotfiles`;
+    // Use pathExists which works for both files and directories
+    if (await pathExists(defaultPath)) {
+      dotfilesPath = defaultPath;
+    }
+  }
+
+  if (!dotfilesPath) {
+    return null;
+  }
+
+  // Try to load config from dotfiles repo
+  let config = await loadConfig(dotfilesPath);
+
+  // Backward compatibility: if no config, use legacy links
+  if (!config) {
+    const legacyLinks = getLegacyLinks(dotfilesPath, home, dotconfig);
+    console.warn("No dot.config found. Using legacy links. Create dot.config.json to customize.");
+    config = {
+      links: legacyLinks,
+      autoCommit: true,
+    };
+  }
+
+  return { dotfilesPath, config };
+}
+
+// Legacy links definition for backward compatibility
+// Used when no dot.config.json exists in the dotfiles repo
+function getLegacyLinks(dotfiles: string, home: string, dotconfig: string): LinkMap {
+  return {
+    [`${dotfiles}/zsh/zshenv`]: `${home}/.zshenv`,
+    [`${dotfiles}/zsh/zprofile`]: `${dotconfig}/zsh/.zprofile`,
+    [`${dotfiles}/zsh/zshrc`]: `${dotconfig}/zsh/.zshrc`,
+    [`${dotfiles}/zsh/starship.toml`]: `${dotconfig}/starship.toml`,
+    [`${dotfiles}/git/.gitconfig`]: `${dotconfig}/git/config`,
+    [`${dotfiles}/tmux/tmux.conf`]: `${dotconfig}/tmux/tmux.conf`,
+    [`${dotfiles}/vscode/settings.json`]: `${home}/Library/Application Support/Code/User/settings.json`,
+    [`${dotfiles}/jj/config.toml`]: `${dotconfig}/jj/config.toml`,
+  };
+}
+
+function createConfig(dotfilesPath: string, links: LinkMap, home?: string): Config {
   const resolvedHome = home ?? Bun.env.HOME;
   if (!resolvedHome) {
     throw new Error("HOME environment variable is not set");
   }
-  const dotfiles = `${resolvedHome}/.dotfiles`;
   const dotconfig = `${resolvedHome}/.config`;
   return {
-    dotfiles,
+    dotfiles: dotfilesPath,
     dotconfig,
     home: resolvedHome,
-    reviewedFile: `${dotfiles}/.doctor-reviewed.json`,
-    links: {
-      [`${dotfiles}/zsh/zshenv`]: `${resolvedHome}/.zshenv`,
-      [`${dotfiles}/zsh/zprofile`]: `${dotconfig}/zsh/.zprofile`,
-      [`${dotfiles}/zsh/zshrc`]: `${dotconfig}/zsh/.zshrc`,
-      [`${dotfiles}/zsh/starship.toml`]: `${dotconfig}/starship.toml`,
-      [`${dotfiles}/git/.gitconfig`]: `${dotconfig}/git/config`,
-      [`${dotfiles}/tmux/tmux.conf`]: `${dotconfig}/tmux/tmux.conf`,
-      [`${dotfiles}/vscode/settings.json`]: `${resolvedHome}/Library/Application Support/Code/User/settings.json`,
-      [`${dotfiles}/jj/config.toml`]: `${dotconfig}/jj/config.toml`,
-    },
+    reviewedFile: `${dotfilesPath}/.doctor-reviewed.json`,
+    links,
   };
 }
 
@@ -1059,35 +1147,81 @@ function help() {
 }
 
 // CLI entry point
-const config = createConfig();
-const command = Bun.argv[2];
+async function main() {
+  const globalOptions = parseGlobalArgs();
 
-switch (command) {
-  case "install": {
-    const { force } = parseInstallArgs();
-    if (await preflightCheck(force)) {
-      await install(config);
-    } else {
-      process.exit(1);
+  // Find the command (first positional arg after global flags)
+  // parseArgs with allowPositionals will put the command in positionals
+  const args = Bun.argv.slice(2);
+  let command: string | undefined;
+  for (const arg of args) {
+    if (!arg.startsWith("-") && !arg.startsWith("--")) {
+      // Check if previous arg was --dotfiles (needs value)
+      const prevIdx = args.indexOf(arg) - 1;
+      if (prevIdx >= 0 && args[prevIdx] === "--dotfiles") {
+        continue; // This is the value for --dotfiles, not the command
+      }
+      command = arg;
+      break;
     }
-    break;
   }
-  case "uninstall":
-    await uninstall(config);
-    break;
-  case "sync":
-    await sync(config);
-    break;
-  case "doctor":
-    await doctor(config);
-    break;
-  case "review":
-    await review(config, Bun.argv[3]);
-    break;
-  default:
+
+  // Initialize dot (get dotfiles path and config)
+  const initResult = await initializeDot(globalOptions);
+
+  // Handle commands that don't require initialization
+  if (command === "help" || command === undefined) {
     help();
-    break;
+    return;
+  }
+
+  // All other commands require initialization
+  if (!initResult) {
+    console.error("Error: Could not find dotfiles location.");
+    console.error("Run 'dot init' to set up, or use --dotfiles <path> to specify.");
+    process.exit(1);
+  }
+
+  const { dotfilesPath, config: dotConfig } = initResult;
+  const config = createConfig(dotfilesPath, dotConfig.links);
+
+  switch (command) {
+    case "install": {
+      const { force } = parseInstallArgs();
+      if (await preflightCheck(force)) {
+        await install(config);
+      } else {
+        process.exit(1);
+      }
+      break;
+    }
+    case "uninstall":
+      await uninstall(config);
+      break;
+    case "sync":
+      await sync(config);
+      break;
+    case "doctor":
+      await doctor(config);
+      break;
+    case "review":
+      // Find the path argument (after "review")
+      const reviewIdx = args.indexOf("review");
+      const pathArg = reviewIdx >= 0 ? args[reviewIdx + 1] : undefined;
+      await review(config, pathArg);
+      break;
+    default:
+      console.error(`Unknown command: ${command}`);
+      help();
+      process.exit(1);
+      break;
+  }
 }
+
+main().catch((error) => {
+  console.error("Error:", error.message);
+  process.exit(1);
+});
 
 // Internal test exports - not part of public API
 export const __test = {
@@ -1100,6 +1234,11 @@ export const __test = {
   markAsReviewed,
 };
 
+// Re-export config and state modules
+export { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
+export { getDotfilesPath, loadState, saveState } from "./src/state";
+export type { DotConfig, LinkMap, DotState } from "./src/types";
+
 // Exports for testing
 export {
   // Types
@@ -1111,11 +1250,15 @@ export {
   type BrewfilePackage,
   type BrewfileSyncStatus,
   type HardcodedPathIssue,
+  type GlobalOptions,
   // Constants
   REVIEW_EXPIRY_DAYS,
   DEPENDENCIES,
   // Functions
   createConfig,
+  getLegacyLinks,
+  parseGlobalArgs,
+  initializeDot,
   install,
   uninstall,
   getSymlinkStatus,

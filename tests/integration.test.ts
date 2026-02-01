@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   createConfig,
+  getLegacyLinks,
   install,
   uninstall,
   getSymlinkStatus,
@@ -24,6 +25,14 @@ import {
 } from "../index";
 
 const { pathExists, tryRealpath, resolveSymlinkTarget, linksToExpectedResolved } = __test;
+
+// Test helper: create config with legacy links for a given home directory
+function createTestConfig(home: string): Config {
+  const dotfiles = `${home}/.dotfiles`;
+  const dotconfig = `${home}/.config`;
+  const links = getLegacyLinks(dotfiles, home, dotconfig);
+  return createConfig(dotfiles, links, home);
+}
 
 describe("install/uninstall", () => {
   let tmpDir: string;
@@ -50,7 +59,7 @@ describe("install/uninstall", () => {
     await writeFile(`${tmpDir}/.dotfiles/jj/config.toml`, "# jj");
 
     // Create config pointing to temp dir as "home"
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {
@@ -140,7 +149,7 @@ describe("getSymlinkStatus", () => {
     await mkdir(`${tmpDir}/.dotfiles/zsh`, { recursive: true });
     await writeFile(`${tmpDir}/.dotfiles/zsh/zshenv`, "# test");
 
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {
@@ -310,7 +319,7 @@ describe("uninstall safety", () => {
     await mkdir(`${tmpDir}/.dotfiles/zsh`, { recursive: true });
     await writeFile(`${tmpDir}/.dotfiles/zsh/zshenv`, "# test");
 
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {
@@ -345,31 +354,33 @@ describe("uninstall safety", () => {
 describe("createConfig", () => {
   test("creates config with correct paths", () => {
     const home = "/test/home";
-    const config = createConfig(home);
+    const dotfiles = `${home}/.dotfiles`;
+    const links = { [`${dotfiles}/test`]: `${home}/.test` };
+    const config = createConfig(dotfiles, links, home);
 
     expect(config.home).toBe(home);
-    expect(config.dotfiles).toBe(`${home}/.dotfiles`);
+    expect(config.dotfiles).toBe(dotfiles);
     expect(config.dotconfig).toBe(`${home}/.config`);
-    expect(config.reviewedFile).toBe(`${home}/.dotfiles/.doctor-reviewed.json`);
+    expect(config.reviewedFile).toBe(`${dotfiles}/.doctor-reviewed.json`);
   });
 
-  test("links use home-relative paths", () => {
+  test("links are passed through from argument", () => {
     const home = "/custom/home";
-    const config = createConfig(home);
+    const dotfiles = `${home}/.dotfiles`;
+    const links = {
+      [`${dotfiles}/zsh/zshrc`]: `${home}/.zshrc`,
+      [`${dotfiles}/git/config`]: `${home}/.gitconfig`,
+    };
+    const config = createConfig(dotfiles, links, home);
 
-    // Check that links reference the custom home
-    const sources = Object.keys(config.links);
-    const targets = Object.values(config.links);
-
-    expect(sources.every(s => s.startsWith(`${home}/.dotfiles/`))).toBe(true);
-    expect(targets.every(t => t.startsWith(home))).toBe(true);
+    expect(config.links).toEqual(links);
   });
 
   test("throws when HOME env not set and no home argument", () => {
     const originalHome = process.env.HOME;
     try {
       delete process.env.HOME;
-      expect(() => createConfig()).toThrow("HOME environment variable is not set");
+      expect(() => createConfig("/dotfiles", {})).toThrow("HOME environment variable is not set");
     } finally {
       process.env.HOME = originalHome;
     }
@@ -377,10 +388,40 @@ describe("createConfig", () => {
 
   test("handles home with spaces", () => {
     const home = "/path with spaces/home";
-    const config = createConfig(home);
+    const dotfiles = `${home}/.dotfiles`;
+    const config = createConfig(dotfiles, {}, home);
+
+    expect(config.home).toBe(home);
+    expect(config.dotfiles).toBe(dotfiles);
+  });
+});
+
+describe("getLegacyLinks", () => {
+  test("returns correct legacy links for a home directory", () => {
+    const home = "/custom/home";
+    const dotfiles = `${home}/.dotfiles`;
+    const dotconfig = `${home}/.config`;
+    const links = getLegacyLinks(dotfiles, home, dotconfig);
+
+    // Check that links reference the custom home
+    const sources = Object.keys(links);
+    const targets = Object.values(links);
+
+    expect(sources.every(s => s.startsWith(`${dotfiles}/`))).toBe(true);
+    expect(targets.every(t => t.startsWith(home))).toBe(true);
+
+    // Check specific known links exist
+    expect(links[`${dotfiles}/zsh/zshenv`]).toBe(`${home}/.zshenv`);
+    expect(links[`${dotfiles}/zsh/zshrc`]).toBe(`${dotconfig}/zsh/.zshrc`);
+  });
+
+  test("createTestConfig helper works correctly", () => {
+    const home = "/test/home";
+    const config = createTestConfig(home);
 
     expect(config.home).toBe(home);
     expect(config.dotfiles).toBe(`${home}/.dotfiles`);
+    expect(Object.keys(config.links).length).toBeGreaterThan(0);
   });
 });
 
@@ -624,7 +665,7 @@ describe("getDotfiles", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-scanner-"));
     await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {
@@ -764,7 +805,7 @@ describe("install edge cases", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-install-edge-"));
     await mkdir(`${tmpDir}/.dotfiles/zsh`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {

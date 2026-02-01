@@ -4,11 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createConfig,
+  getLegacyLinks,
   getArchitecture,
   scanForHardcodedPaths,
   checkNerdFont,
   type Config,
 } from "../index";
+
+// Test helper: create config with legacy links for a given home directory
+function createTestConfig(home: string): Config {
+  const dotfiles = `${home}/.dotfiles`;
+  const dotconfig = `${home}/.config`;
+  const links = getLegacyLinks(dotfiles, home, dotconfig);
+  return createConfig(dotfiles, links, home);
+}
 
 // --- getArchitecture tests ---
 
@@ -38,7 +47,7 @@ describe("scanForHardcodedPaths", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-arch-scan-"));
     await mkdir(`${tmpDir}/.dotfiles/zsh/config`, { recursive: true });
     await mkdir(`${tmpDir}/.dotfiles/zsh/plugins`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createConfig,
+  getLegacyLinks,
   getRepoFiles,
   getGitStatus,
   __test,
@@ -13,6 +14,14 @@ import { $ } from "bun";
 
 const { readReviewedPaths, writeReviewedPaths, markAsReviewed } = __test;
 import { normalizePath } from "../index";
+
+// Test helper: create config with legacy links for a given home directory
+function createTestConfig(home: string): Config {
+  const dotfiles = `${home}/.dotfiles`;
+  const dotconfig = `${home}/.config`;
+  const links = getLegacyLinks(dotfiles, home, dotconfig);
+  return createConfig(dotfiles, links, home);
+}
 
 // --- Test utilities ---
 
@@ -31,7 +40,7 @@ describe("readReviewedPaths", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-read-"));
     await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {
@@ -72,7 +81,7 @@ describe("writeReviewedPaths", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-write-"));
     await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {
@@ -110,7 +119,7 @@ describe("writeReviewedPaths", () => {
   test("creates parent directory if missing", async () => {
     // Use a config where .dotfiles doesn't exist yet
     const freshTmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-mkdir-"));
-    const freshConfig = createConfig(freshTmpDir);
+    const freshConfig = createTestConfig(freshTmpDir);
 
     const data = { "/path": "2024-01-01" };
     await writeReviewedPaths(freshConfig, data);
@@ -131,7 +140,7 @@ describe("getRepoFiles", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-repo-"));
     await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
     await initGitRepo(`${tmpDir}/.dotfiles`);
   });
 
@@ -180,7 +189,7 @@ describe("getGitStatus", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-gitstatus-"));
     await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
     await initGitRepo(`${tmpDir}/.dotfiles`);
   });
 
@@ -233,7 +242,7 @@ describe("markAsReviewed", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-mark-reviewed-"));
     await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createConfig(tmpDir);
+    config = createTestConfig(tmpDir);
   });
 
   afterEach(async () => {

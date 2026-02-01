@@ -2,7 +2,13 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DotStateSchema, type DotState } from "./types";
 
-const STATE_PATH = `${process.env.HOME}/.config/dot/state.json`;
+/**
+ * Get the state file path.
+ * Computed at runtime to support changing HOME in tests.
+ */
+function getStatePath(): string {
+  return `${process.env.HOME}/.config/dot/state.json`;
+}
 
 /**
  * Load state from ~/.config/dot/state.json
@@ -10,7 +16,8 @@ const STATE_PATH = `${process.env.HOME}/.config/dot/state.json`;
  */
 export async function loadState(): Promise<DotState | null> {
   try {
-    const file = Bun.file(STATE_PATH);
+    const statePath = getStatePath();
+    const file = Bun.file(statePath);
     if (!(await file.exists())) {
       return null;
     }
@@ -30,9 +37,10 @@ export async function loadState(): Promise<DotState | null> {
  * Creates parent directory if needed
  */
 export async function saveState(state: DotState): Promise<void> {
+  const statePath = getStatePath();
   // Ensure parent directory exists
-  await mkdir(dirname(STATE_PATH), { recursive: true });
-  await Bun.write(STATE_PATH, JSON.stringify(state, null, 2) + "\n");
+  await mkdir(dirname(statePath), { recursive: true });
+  await Bun.write(statePath, JSON.stringify(state, null, 2) + "\n");
 }
 
 export type GetDotfilesPathOptions = {
