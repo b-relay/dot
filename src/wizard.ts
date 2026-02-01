@@ -94,8 +94,20 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /**
+ * Custom error class for user cancellation (Ctrl+C).
+ * This allows callers to distinguish between errors and user abort.
+ */
+export class UserCancelledError extends Error {
+  constructor(message = 'User cancelled') {
+    super(message);
+    this.name = 'UserCancelledError';
+  }
+}
+
+/**
  * Prompt user for dotfiles location with arrow-key selection.
  * Returns absolute path.
+ * Throws UserCancelledError if user presses Ctrl+C.
  */
 export function promptDotfilesLocation(): string {
   const home = process.env.HOME ?? '';
@@ -111,15 +123,23 @@ export function promptDotfilesLocation(): string {
   });
 
   if (result.error) {
-    throw new Error('Selection cancelled');
+    throw new UserCancelledError();
   }
 
   if (result.selectedIndex === 1) {
-    const promptResult = createPrompt('Enter path: ');
+    // User wants to enter custom path
+    console.log(''); // Add newline for better formatting
+    const promptResult = createPrompt('Enter path (e.g., ~/my-dotfiles): ');
     if (promptResult.error || promptResult.value === null) {
-      throw new Error('Input cancelled');
+      throw new UserCancelledError();
     }
-    return expandPath(promptResult.value);
+    const path = promptResult.value.trim();
+    if (!path) {
+      // Empty input, use default
+      console.log(`Using default: ${defaultPath}`);
+      return defaultPath;
+    }
+    return expandPath(path);
   }
 
   return defaultPath;
@@ -160,6 +180,7 @@ export type SelectableItem = {
 /**
  * Select items using arrow-key navigation.
  * Supports single or multi-select mode.
+ * Throws UserCancelledError if user presses Ctrl+C.
  */
 export function selectItems<T extends SelectableItem>(
   items: T[],
@@ -194,8 +215,8 @@ export function selectItems<T extends SelectableItem>(
       });
 
       if (result.error) {
-        // User cancelled, return what we have
-        return selected;
+        // User pressed Ctrl+C - abort entirely
+        throw new UserCancelledError();
       }
 
       const selectedIdx = result.selectedIndex;
@@ -227,7 +248,12 @@ export function selectItems<T extends SelectableItem>(
     headerText: options?.headerText,
   });
 
-  if (result.error || result.selectedIndex === null) {
+  if (result.error) {
+    // User pressed Ctrl+C - abort entirely
+    throw new UserCancelledError();
+  }
+
+  if (result.selectedIndex === null) {
     return [];
   }
 
@@ -303,6 +329,7 @@ export async function previewSymlinks(
 /**
  * Confirmation prompt using selection UI.
  * Default focus is on 'No' for safety.
+ * Throws UserCancelledError if user presses Ctrl+C.
  */
 export function confirm(message: string): boolean {
   const items = [
@@ -315,7 +342,8 @@ export function confirm(message: string): boolean {
   });
 
   if (result.error) {
-    return false;
+    // User pressed Ctrl+C - abort entirely
+    throw new UserCancelledError();
   }
 
   // Yes is at index 1
@@ -324,11 +352,13 @@ export function confirm(message: string): boolean {
 
 /**
  * Prompt for a text input value.
+ * Throws UserCancelledError if user presses Ctrl+C.
  */
 export function promptText(message: string): string | null {
   const result = createPrompt(message);
   if (result.error) {
-    return null;
+    // User pressed Ctrl+C - abort entirely
+    throw new UserCancelledError();
   }
   return result.value;
 }

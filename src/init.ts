@@ -10,6 +10,7 @@ import {
   previewSymlinks,
   confirm,
   buildLinksFromDotfiles,
+  UserCancelledError,
   type DetectedDotfile,
 } from "./wizard";
 import type { DotConfig, LinkMap } from "./types";
@@ -160,6 +161,21 @@ async function migrateDotfiles(
  * 9. Save state
  */
 export async function init(options: InitOptions = {}): Promise<void> {
+  try {
+    await initImpl(options);
+  } catch (error) {
+    if (error instanceof UserCancelledError) {
+      console.log("\nAborted.");
+      process.exit(1);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Internal implementation of init command.
+ */
+async function initImpl(options: InitOptions): Promise<void> {
   const home = process.env.HOME;
   if (!home) {
     throw new Error("HOME environment variable is not set");
