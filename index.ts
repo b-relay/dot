@@ -20,27 +20,13 @@ import type { InitOptions } from "./src/init";
 import { move } from "./src/move";
 import type { MoveOptions } from "./src/move";
 import { update } from "./src/update";
-import type { DotConfig, LinkMap, DotState } from "./src/types";
+import type { DotConfig, LinkMap, DotState, Dependency, BrewfileConfig } from "./src/types";
+import * as p from '@clack/prompts';
 
 const VERSION = "0.1.0";
 const REVIEW_EXPIRY_DAYS = 90;
 
-const DEPENDENCIES: readonly Dependency[] = [
-  // Required - shell will error without these
-  { name: "brew", required: true, description: "Homebrew package manager" },
-  { name: "starship", required: true, brewPackage: "starship", description: "Shell prompt" },
-  { name: "cargo", required: true, description: "Rust toolchain (install via rustup)" },
-  { name: "fnm", required: true, brewPackage: "fnm", description: "Node version manager" },
-  { name: "zoxide", required: true, brewPackage: "zoxide", description: "Smart cd replacement" },
-
-  // Recommended - enhance experience
-  { name: "fzf", required: false, brewPackage: "fzf", description: "Fuzzy finder" },
-  { name: "vivid", required: false, brewPackage: "vivid", description: "LS_COLORS generator" },
-  { name: "eza", required: false, brewPackage: "eza", description: "Modern ls replacement" },
-  { name: "bun", required: false, brewPackage: "oven-sh/bun/bun", description: "JavaScript runtime" },
-] as const;
-
-// Config type for dependency injection
+// Config type for internal use (resolved paths)
 type Config = {
   dotfiles: string;
   dotconfig: string;
@@ -49,19 +35,12 @@ type Config = {
   links: Record<string, string>;
 };
 
-type Dependency = {
-  name: string;
-  required: boolean;
-  brewPackage?: string;
-  description: string;
-};
-
 type DependencyStatus = {
   name: string;
   required: boolean;
   installed: boolean;
   brewPackage?: string;
-  description: string;
+  description?: string;
 };
 
 type BrewfilePackage = {
@@ -330,9 +309,12 @@ async function isToolInstalled(name: string): Promise<boolean> {
   return exitCode === 0;
 }
 
-async function checkDependencies(): Promise<DependencyStatus[]> {
+async function checkDependencies(deps: Dependency[]): Promise<DependencyStatus[]> {
+  if (deps.length === 0) {
+    return [];
+  }
   return Promise.all(
-    DEPENDENCIES.map(async (dep) => ({
+    deps.map(async (dep) => ({
       name: dep.name,
       required: dep.required,
       installed: await isToolInstalled(dep.name),
@@ -402,27 +384,32 @@ function printBrewInstallCommand(deps: DependencyStatus[]): void {
   }
 }
 
-async function preflightCheck(force: boolean): Promise<boolean> {
+async function preflightCheck(force: boolean, dotConfig: DotConfig): Promise<boolean> {
   if (force) {
-    console.log("Warning: Bypassing dependency check (--force)");
+    p.log.warn('Bypassing dependency check (--force)');
     return true;
   }
 
-  const deps = await checkDependencies();
-  const missingRequired = deps.filter(d => d.required && !d.installed);
+  const configDeps = dotConfig.dependencies ?? [];
+  const requiredDeps = configDeps.filter(d => d.required);
+
+  if (requiredDeps.length === 0) {
+    return true; // No required deps configured
+  }
+
+  const deps = await checkDependencies(requiredDeps);
+  const missingRequired = deps.filter(d => !d.installed);
 
   if (missingRequired.length === 0) {
     return true;
   }
 
-  console.error("Error: Missing required dependencies:\n");
+  p.log.error('Missing required dependencies:');
   for (const dep of missingRequired) {
-    const hint = dep.brewPackage
-      ? ` (brew install ${dep.brewPackage})`
-      : "";
-    console.error(`  \u2718 ${dep.name}${hint}`);
+    const hint = dep.brewPackage ? ` (brew install ${dep.brewPackage})` : '';
+    console.error(`  ✗ ${dep.name}${hint}`);
   }
-  console.error("\nInstall dependencies first, or use --force to bypass this check.");
+  p.log.info('Install dependencies first, or use --force to bypass.');
   return false;
 }
 
@@ -430,8 +417,9 @@ async function preflightCheck(force: boolean): Promise<boolean> {
 
 // --- Brewfile sync helpers ---
 
-async function parseBrewfile(config: Config): Promise<BrewfilePackage[]> {
-  const brewfilePath = `${config.dotfiles}/homebrew/brewfile`;
+async function parseBrewfile(config: Config, brewfileConfig?: BrewfileConfig): Promise<BrewfilePackage[]> {
+  const relativePath = brewfileConfig?.path ?? "homebrew/brewfile";
+  const brewfilePath = `${config.dotfiles}/${relativePath}`;
   const file = Bun.file(brewfilePath);
 
   if (!(await file.exists())) {
@@ -508,9 +496,9 @@ function getPackageBaseName(name: string): string {
   return parts[parts.length - 1]!;
 }
 
-async function checkBrewfileSync(config: Config): Promise<BrewfileSyncStatus> {
+async function checkBrewfileSync(config: Config, brewfileConfig?: BrewfileConfig): Promise<BrewfileSyncStatus> {
   const [brewfilePackages, installedPackages] = await Promise.all([
-    parseBrewfile(config),
+    parseBrewfile(config, brewfileConfig),
     getInstalledPackages(),
   ]);
 
@@ -804,40 +792,56 @@ async function uninstall(config: Config) {
   console.log("Done!");
 }
 
-export function filterBrewfile(output: string): string {
+export function filterBrewfile(output: string, exclude: string[] = ["vscode", "cargo", "go"]): string {
   return output
     .split("\n")
     .filter(line => {
       const t = line.trimStart();
-      if (t.startsWith('vscode "')) return false;
-      if (t.startsWith('cargo "')) return false;
-      if (t.startsWith('go "')) return false;
+      for (const pkg of exclude) {
+        if (t.startsWith(`${pkg} "`)) return false;
+      }
       return true;
     })
     .join("\n");
 }
 
-async function sync(config: Config) {
-  console.log("Syncing dotfiles...");
+async function sync(config: Config, dotConfig: DotConfig) {
+  p.intro('dot sync');
 
-  // Update brewfile
-  console.log("\nUpdating brewfile...");
+  const brewfileConfig = dotConfig.brewfile;
+  const relativePath = brewfileConfig?.path ?? "homebrew/brewfile";
+  const exclude = brewfileConfig?.exclude ?? ["vscode", "cargo", "go"];
+
+  const s = p.spinner();
+  s.start('Dumping Homebrew packages...');
 
   // Run brew bundle dump to stdout
-  const output =
-    await $`brew bundle dump --describe -f --file=/dev/stdout`.text();
+  const output = await $`brew bundle dump --describe -f --file=/dev/stdout`.text();
 
-  // Filter out unwanted lines (vscode, cargo, go packages)
-  const filtered = filterBrewfile(output);
+  // Filter out unwanted lines
+  const filtered = filterBrewfile(output, exclude);
 
   // Write filtered output
-  await Bun.write(`${config.dotfiles}/homebrew/brewfile`, filtered);
+  const brewfilePath = `${config.dotfiles}/${relativePath}`;
+  await Bun.write(brewfilePath, filtered);
+
+  s.stop('Brewfile updated');
+
+  // Show what was excluded
+  if (exclude.length > 0) {
+    p.log.info(`Excluded: ${exclude.join(', ')}`);
+  }
 
   // Show git status
-  console.log("\nGit status:");
-  await $`git -C ${config.dotfiles} status -s`;
+  const statusOutput = await $`git -C ${config.dotfiles} status -s`.text();
+  if (statusOutput.trim()) {
+    p.log.step('Changes:');
+    console.log(statusOutput);
+  } else {
+    p.log.success('No changes');
+  }
 
-  console.log("\nDone! Review changes and commit if needed.");
+  p.outro('Review changes and commit if needed');
 }
 
 type SymlinkStatus = {
@@ -1054,15 +1058,13 @@ async function markAsReviewed(
 
 async function review(config: Config, pathArg: string | undefined) {
   if (!pathArg) {
-    console.log("Usage: dot review <path>");
-    console.log("");
-    console.log(
-      "Mark a path as reviewed so doctor won't recommend it for 90 days.",
-    );
-    console.log("");
-    console.log("Examples:");
-    console.log("  dot review ~/.config/gh");
-    console.log("  dot review ~/.gitignore_global");
+    p.log.error('Usage: dot review <path>');
+    console.log('');
+    console.log('Mark a path as reviewed so doctor won\'t recommend it for 90 days.');
+    console.log('');
+    console.log('Examples:');
+    console.log('  dot review ~/.config/gh');
+    console.log('  dot review ~/.gitignore_global');
     process.exit(1);
   }
 
@@ -1070,9 +1072,8 @@ async function review(config: Config, pathArg: string | undefined) {
   const today = new Date().toISOString().split("T")[0]!;
   await markAsReviewed(config, normalizedPath, today);
 
-  console.log(`Marked as reviewed: ${normalizedPath}`);
-  console.log(
-    `This path will be excluded from doctor recommendations until ${getExpiryDate(today)}`,
+  p.log.success(`Marked as reviewed: ${normalizedPath}`);
+  p.log.info(`Excluded from doctor until ${getExpiryDate(today)}`,
   );
 }
 
@@ -1082,33 +1083,102 @@ function getExpiryDate(reviewDate: string): string {
   return date.toISOString().split("T")[0]!;
 }
 
-async function doctor(config: Config) {
-  console.log("Running dotfiles doctor...\n");
+async function doctor(config: Config, dotConfig: DotConfig) {
+  p.intro('dot doctor');
 
-  // Check dependencies first (fast, no API calls)
-  console.log("Checking dependencies...");
-  const [depStatus, fontInstalled] = await Promise.all([
-    checkDependencies(),
-    checkNerdFont(),
-  ]);
-  printDependencyStatus(depStatus, fontInstalled);
-  printBrewInstallCommand(depStatus);
+  const s = p.spinner();
 
-  console.log("");  // Blank line before next section
+  // Check dependencies if configured
+  const deps = dotConfig.dependencies ?? [];
+  let depStatus: DependencyStatus[] = [];
 
-  // Check brewfile sync
-  console.log("Checking brewfile sync...");
-  const brewfileStatus = await checkBrewfileSync(config);
-  printBrewfileStatus(brewfileStatus, config);
+  if (deps.length > 0) {
+    s.start('Checking dependencies...');
+    const [status, fontInstalled] = await Promise.all([
+      checkDependencies(deps),
+      checkNerdFont(),
+    ]);
+    depStatus = status;
+    s.stop('Dependencies checked');
 
-  console.log("");  // Blank line before next section
+    // Show dependency status
+    const required = depStatus.filter(d => d.required);
+    const recommended = depStatus.filter(d => !d.required);
 
-  // Check architecture and hardcoded paths
+    if (required.length > 0) {
+      p.log.step('Required:');
+      for (const dep of required) {
+        const icon = dep.installed ? '✓' : '✗';
+        const hint = !dep.installed && dep.brewPackage ? ` (brew install ${dep.brewPackage})` : '';
+        console.log(`  ${icon} ${dep.name}${hint}`);
+      }
+    }
+
+    if (recommended.length > 0) {
+      p.log.step('Recommended:');
+      for (const dep of recommended) {
+        const icon = dep.installed ? '✓' : '○';
+        const hint = !dep.installed && dep.brewPackage ? ` (brew install ${dep.brewPackage})` : '';
+        console.log(`  ${icon} ${dep.name}${hint}`);
+      }
+    }
+
+    // Nerd font
+    if (fontInstalled) {
+      console.log(`  ✓ JetBrains Mono Nerd Font`);
+    } else {
+      console.log(`  ○ JetBrains Mono Nerd Font (brew install font-jetbrains-mono-nerd-font)`);
+    }
+  } else {
+    p.log.info('No dependencies configured (add "dependencies" to dot.config.json)');
+  }
+
+  // Check brewfile sync if configured
+  const brewfileConfig = dotConfig.brewfile;
+  if (brewfileConfig) {
+    s.start('Checking brewfile sync...');
+    const brewfileStatus = await checkBrewfileSync(config, brewfileConfig);
+    s.stop('Brewfile checked');
+
+    if (brewfileStatus.inBrewfileNotInstalled.length > 0) {
+      p.log.warn(`Not installed (${brewfileStatus.inBrewfileNotInstalled.length}):`);
+      for (const pkg of brewfileStatus.inBrewfileNotInstalled.slice(0, 5)) {
+        console.log(`  ✗ ${pkg.name}`);
+      }
+      if (brewfileStatus.inBrewfileNotInstalled.length > 5) {
+        console.log(`  ... and ${brewfileStatus.inBrewfileNotInstalled.length - 5} more`);
+      }
+    }
+
+    if (brewfileStatus.installedNotInBrewfile.length > 0) {
+      p.log.info(`Untracked (${brewfileStatus.installedNotInBrewfile.length}):`);
+      for (const pkg of brewfileStatus.installedNotInBrewfile.slice(0, 5)) {
+        console.log(`  - ${pkg.name}`);
+      }
+      if (brewfileStatus.installedNotInBrewfile.length > 5) {
+        console.log(`  ... and ${brewfileStatus.installedNotInBrewfile.length - 5} more`);
+      }
+    }
+
+    if (brewfileStatus.inBrewfileNotInstalled.length === 0 && brewfileStatus.installedNotInBrewfile.length === 0) {
+      p.log.success('Brewfile in sync');
+    }
+  }
+
+  // Check architecture
   const architecture = getArchitecture();
   const pathIssues = await scanForHardcodedPaths(config);
-  printArchitectureStatus(architecture, pathIssues);
 
-  console.log("");  // Blank line before next section
+  p.log.step(`Architecture: ${architecture}`);
+  if (pathIssues.length > 0) {
+    p.log.warn(`Hardcoded paths (${pathIssues.length}):`);
+    for (const issue of pathIssues.slice(0, 3)) {
+      const displayPath = issue.file.includes('.dotfiles')
+        ? issue.file.split('.dotfiles/')[1]
+        : issue.file;
+      console.log(`  ${displayPath}:${issue.line} - ${issue.path}`);
+    }
+  }
 
   // Load reviewed paths
   const reviewedPaths = await readReviewedPaths(config);
@@ -1123,27 +1193,21 @@ async function doctor(config: Config) {
     }
   }
 
-  // Clean up expired entries
   if (expiredReviewed.length > 0) {
     await writeReviewedPaths(config, activeReviewed);
   }
 
-  // Gather state
-  console.log("Gathering symlink status...");
-  const symlinkStatus = await getSymlinkStatus(config);
+  // Gather state with spinner
+  s.start('Gathering system state...');
+  const [symlinkStatus, repoFiles, dotfiles, gitStatus] = await Promise.all([
+    getSymlinkStatus(config),
+    getRepoFiles(config),
+    getDotfiles(config),
+    getGitStatus(config),
+  ]);
+  s.stop('State gathered');
 
-  console.log("Gathering repo files...");
-  const repoFiles = await getRepoFiles(config);
-
-  console.log("Scanning dotfiles...");
-  const dotfiles = await getDotfiles(config);
-
-  console.log("Checking git status...");
-  const gitStatus = await getGitStatus(config);
-
-  console.log("\nAnalyzing with Claude...\n");
-
-  // Build context string
+  // Build context for Claude
   const context = JSON.stringify(
     {
       architecture,
@@ -1177,14 +1241,17 @@ Format your response as a brief, actionable report. Group cleanup suggestions se
 
 Data:`;
 
+  s.start('Analyzing with Claude...');
   try {
+    s.stop('');
     await $`claude -p ${prompt + "\n\n" + context} --model haiku`;
   } catch (error) {
-    console.error(
-      "Failed to run claude CLI. Make sure it's installed and configured.",
-    );
+    s.stop('Analysis failed');
+    p.log.error('Failed to run claude CLI. Make sure it\'s installed and configured.');
     process.exit(1);
   }
+
+  p.outro('Doctor complete');
 }
 
 function help() {
@@ -1289,7 +1356,7 @@ async function main() {
   switch (command) {
     case "install": {
       const { force } = parseInstallArgs();
-      if (await preflightCheck(force)) {
+      if (await preflightCheck(force, dotConfig)) {
         await install(config);
       } else {
         process.exit(1);
@@ -1300,10 +1367,10 @@ async function main() {
       await uninstall(config);
       break;
     case "sync":
-      await sync(config);
+      await sync(config, dotConfig);
       break;
     case "doctor":
-      await doctor(config);
+      await doctor(config, dotConfig);
       break;
     case "review": {
       // Find the path argument (after "review")
