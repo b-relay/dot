@@ -766,17 +766,95 @@ async function uninstall(config: Config) {
   console.log("Done!");
 }
 
-export function filterBrewfile(output: string, exclude: string[] = ["vscode", "cargo", "go"]): string {
+/**
+ * Filter brewfile output to exclude certain package types.
+ * Matches brew bundle dump format: vscode "ext", mas "app", whalebrew "pkg"
+ *
+ * @param output - Raw output from `brew bundle dump`
+ * @param exclude - Package type prefixes to exclude (e.g., ["vscode", "mas"])
+ * @returns Filtered brewfile content
+ */
+export function filterBrewfile(output: string, exclude: string[] = ["vscode"]): string {
+  if (exclude.length === 0) {
+    return output;
+  }
+
+  // Build regex to match lines like: vscode "extension", brew "go", etc.
+  // Format: <type> "<package>"
+  const excludePattern = new RegExp(`^(${exclude.join('|')})\\s+"`, 'i');
+
   return output
     .split("\n")
     .filter(line => {
       const t = line.trimStart();
-      for (const pkg of exclude) {
-        if (t.startsWith(`${pkg} "`)) return false;
-      }
-      return true;
+      return !excludePattern.test(t);
     })
     .join("\n");
+}
+
+/**
+ * Human-readable descriptions for exclude types.
+ * These match line prefixes in brew bundle dump output.
+ */
+const EXCLUDE_DESCRIPTIONS: Record<string, string> = {
+  vscode: 'VS Code extensions (vscode "...")',
+  mas: 'Mac App Store apps (mas "...")',
+  whalebrew: 'Whalebrew containers (whalebrew "...")',
+};
+
+/**
+ * Configure brewfile sync exclusions interactively
+ */
+async function syncConfig(dotfilesPath: string, dotConfig: DotConfig): Promise<void> {
+  p.intro('dot sync config');
+
+  const currentExclude = dotConfig.brewfile?.exclude ?? ['vscode'];
+
+  p.log.info('Configure which package types to exclude from brewfile sync.');
+  console.log('');
+  console.log('  When running `dot sync`, these package types will be filtered out.');
+  console.log('  This is useful for packages managed outside of Homebrew.');
+  console.log('');
+
+  const options = Object.entries(EXCLUDE_DESCRIPTIONS).map(([value, desc]) => ({
+    value,
+    label: value,
+    hint: desc,
+  }));
+
+  const selected = await p.multiselect({
+    message: 'Select package types to exclude:',
+    options,
+    initialValues: currentExclude,
+    required: false,
+  });
+
+  if (p.isCancel(selected)) {
+    p.log.warn('Cancelled');
+    return;
+  }
+
+  const newExclude = selected as string[];
+
+  // Update config
+  const newConfig: DotConfig = {
+    ...dotConfig,
+    brewfile: {
+      ...dotConfig.brewfile,
+      path: dotConfig.brewfile?.path ?? 'homebrew/brewfile',
+      exclude: newExclude,
+    },
+  };
+
+  await writeConfig(dotfilesPath, newConfig);
+
+  if (newExclude.length === 0) {
+    p.log.success('No exclusions configured - all packages will be included');
+  } else {
+    p.log.success(`Excluding: ${newExclude.join(', ')}`);
+  }
+
+  p.outro('Run `dot sync` to update your brewfile');
 }
 
 async function sync(config: Config, dotConfig: DotConfig) {
@@ -784,13 +862,30 @@ async function sync(config: Config, dotConfig: DotConfig) {
 
   const brewfileConfig = dotConfig.brewfile;
   const relativePath = brewfileConfig?.path ?? "homebrew/brewfile";
-  const exclude = brewfileConfig?.exclude ?? ["vscode", "cargo", "go"];
+  const exclude = brewfileConfig?.exclude ?? ["vscode"];
+
+  // Show exclusion info
+  if (exclude.length > 0) {
+    const excludeList = exclude.map(e => EXCLUDE_DESCRIPTIONS[e] ? `${e}` : e).join(', ');
+    p.log.info(`Excluding: ${excludeList}`);
+    console.log(`  Run 'dot sync config' to change exclusions`);
+  } else {
+    p.log.info('No exclusions - including all packages');
+    console.log(`  Run 'dot sync config' to exclude package types`);
+  }
 
   const s = p.spinner();
   s.start('Dumping Homebrew packages...');
 
   // Run brew bundle dump to stdout
-  const output = await $`brew bundle dump --describe -f --file=/dev/stdout`.text();
+  let output: string;
+  try {
+    output = await $`brew bundle dump --describe -f --file=/dev/stdout`.text();
+  } catch (error) {
+    s.stop('Failed');
+    p.log.error('Failed to dump Homebrew packages. Is brew installed?');
+    process.exit(1);
+  }
 
   // Filter out unwanted lines
   const filtered = filterBrewfile(output, exclude);
@@ -800,11 +895,6 @@ async function sync(config: Config, dotConfig: DotConfig) {
   await Bun.write(brewfilePath, filtered);
 
   s.stop('Brewfile updated');
-
-  // Show what was excluded
-  if (exclude.length > 0) {
-    p.log.info(`Excluded: ${exclude.join(', ')}`);
-  }
 
   // Show git status
   const statusOutput = await $`git -C ${config.dotfiles} status -s`.text();
@@ -1253,10 +1343,12 @@ function help() {
   console.log("    --from <url>  Clone from GitHub repo");
   console.log("    --force, -f   Overwrite existing config");
   console.log("    --ignore <p>  Skip pattern during scan (repeatable)");
+  console.log("    --dry-run     Preview changes without making them");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");
-  console.log("  sync            Update brewfile and show git status");
+  console.log("  sync            Update brewfile from installed packages");
+  console.log("  sync config     Configure which package types to exclude");
   console.log(
     "  doctor          Analyze dotfiles with Claude and suggest fixes",
   );
@@ -1357,9 +1449,18 @@ async function main() {
     case "uninstall":
       await uninstall(config);
       break;
-    case "sync":
-      await sync(config, dotConfig);
+    case "sync": {
+      // Check for subcommand
+      const syncIdx = args.indexOf("sync");
+      const syncSubcommand = syncIdx >= 0 ? args[syncIdx + 1] : undefined;
+
+      if (syncSubcommand === "config") {
+        await syncConfig(dotfilesPath, dotConfig);
+      } else {
+        await sync(config, dotConfig);
+      }
       break;
+    }
     case "doctor": {
       // Check for subcommand
       const doctorIdx = args.indexOf("doctor");

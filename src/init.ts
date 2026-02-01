@@ -28,9 +28,10 @@ import {
 import type { DotConfig, LinkMap } from "./types";
 
 export type InitOptions = {
-  from?: string;    // --from github.com/user/dotfiles
-  force?: boolean;  // --force to overwrite existing config
+  from?: string;      // --from github.com/user/dotfiles
+  force?: boolean;    // --force to overwrite existing config
   ignore?: string[];  // --ignore pattern (can be used multiple times)
+  dryRun?: boolean;   // --dry-run to preview without making changes
 };
 
 /**
@@ -666,6 +667,8 @@ export function parseInitArgs(args: string[]): InitOptions {
     } else if (arg === "--ignore" && i + 1 < args.length) {
       options.ignore = options.ignore ?? [];
       options.ignore.push(args[++i]!);
+    } else if (arg === "--dry-run") {
+      options.dryRun = true;
     }
   }
 
