@@ -77,12 +77,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. User can test init command without creating symlinks using --dry-run flag
   3. User sees helpful annotations for non-valuable dotfiles (caches, temp files)
   4. False conflict detection bug is resolved and verified
-**Plans**: 3 plans
+  5. User can resolve file conflicts with backup/diff/merge options
+**Plans**: 4 plans
 
 Plans:
 - [ ] 07-01-PLAN.md — Fix conflict detection bug (INIT-04)
-- [ ] 07-02-PLAN.md — Add directory filtering and file annotations (INIT-01, INIT-03)
-- [ ] 07-03-PLAN.md — Add --dry-run flag (INIT-02)
+- [ ] 07-02-PLAN.md — Add directory filtering, file annotations, and config patterns (INIT-01, INIT-03)
+- [ ] 07-03-PLAN.md — Add --dry-run flag with colored preview (INIT-02)
+- [ ] 07-04-PLAN.md — Implement conflict resolution flow (backup/diff/merge)
 
 ### Phase 8: Doctor-Reviewed Migration
 **Goal**: Reviewed paths stored in machine-specific location with flexible ignore options
@@ -156,7 +158,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11
 | 4. Path Hardcoding Detection | v1.1 | N/A | Complete | 2025 |
 | 5. External Config | v2.0 | N/A | Complete | 2026-02-01 |
 | 6. Init Wizard | v2.0 | N/A | Complete | 2026-02-01 |
-| 7. Init Wizard Fixes | v2.1 | 0/3 | Ready | - |
+| 7. Init Wizard Fixes | v2.1 | 0/4 | Ready | - |
 | 8. Doctor-Reviewed Migration | v2.1 | 0/TBD | Not started | - |
 | 9. Brewfile Sync UX | v2.1 | 0/TBD | Not started | - |
 | 10. Enhanced Diagnostics | v2.1 | 0/TBD | Not started | - |
