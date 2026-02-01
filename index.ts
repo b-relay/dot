@@ -1138,6 +1138,9 @@ function help() {
   console.log("Usage: dot <command>");
   console.log("");
   console.log("Commands:");
+  console.log("  init            First-time setup wizard");
+  console.log("    --from <url>  Clone from GitHub repo");
+  console.log("    --force, -f   Overwrite existing config");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");
@@ -1173,14 +1176,23 @@ async function main() {
     }
   }
 
-  // Initialize dot (get dotfiles path and config)
-  const initResult = await initializeDot(globalOptions);
-
   // Handle commands that don't require initialization
   if (command === "help" || command === undefined) {
     help();
     return;
   }
+
+  // Init command runs before initialization check
+  if (command === "init") {
+    const initIdx = args.indexOf("init");
+    const initArgs = initIdx >= 0 ? args.slice(initIdx + 1) : [];
+    const initOptions = parseInitArgs(initArgs);
+    await init(initOptions);
+    return;
+  }
+
+  // Initialize dot (get dotfiles path and config)
+  const initResult = await initializeDot(globalOptions);
 
   // All other commands require initialization
   if (!initResult) {
