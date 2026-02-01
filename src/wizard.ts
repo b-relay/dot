@@ -22,6 +22,7 @@ export type DetectedDotfile = {
   suggested: string;      // Suggested location in repo (e.g., git/.gitconfig)
   sourcePath?: string;    // Actual source path in repo (for already-linked files)
   isDirectory: boolean;   // Whether it's a directory
+  fileCount?: number;     // For directories: number of files inside
   warning?: string;       // Warning message (e.g., for .ssh/config)
   status?: DotfileStatus; // Status relative to dotfiles repo
 };
@@ -188,6 +189,59 @@ async function isDirectory(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Count files in a directory (non-recursive, excludes hidden).
+ */
+async function countFiles(dirPath: string): Promise<number> {
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    return entries.filter(e => !e.name.startsWith('.')).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * List files in a directory for drill-down selection.
+ * Returns DetectedDotfile entries for each file/subfolder.
+ */
+export async function listDirectoryContents(
+  dirPath: string,
+  relativeName: string,
+  suggestedBase: string
+): Promise<DetectedDotfile[]> {
+  const results: DetectedDotfile[] = [];
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      // Skip hidden files in drill-down
+      if (entry.name.startsWith('.')) continue;
+
+      const fullPath = resolve(dirPath, entry.name);
+      const name = `${relativeName}/${entry.name}`;
+      const suggested = `${suggestedBase}/${entry.name}`;
+      const isDir = entry.isDirectory();
+
+      let fileCount: number | undefined;
+      if (isDir) {
+        fileCount = await countFiles(fullPath);
+      }
+
+      results.push({
+        path: fullPath,
+        name,
+        suggested,
+        isDirectory: isDir,
+        fileCount,
+        status: 'available',
+      });
+    }
+  } catch {
+    // Ignore errors
+  }
+  return results;
 }
 
 /**
@@ -633,12 +687,14 @@ export async function scanCommonDotfiles(
     if (symlinkInfo) {
       const actualRelativePath = getRelativeRepoPath(symlinkInfo.sourcePath, dotfilesPath!);
       const isDir = symlinkInfo.targetExists ? await isDirectory(symlinkInfo.sourcePath) : false;
+      const fileCount = isDir ? await countFiles(symlinkInfo.sourcePath) : undefined;
       found.push({
         path: fullPath,
         name: relativePath,
         suggested: actualRelativePath,
         sourcePath: symlinkInfo.sourcePath,
         isDirectory: isDir,
+        fileCount,
         warning: getWarning(relativePath),
         status: symlinkInfo.targetExists ? 'already-linked' : 'broken-link',
       });
@@ -650,6 +706,7 @@ export async function scanCommonDotfiles(
     if (!homeFileExists) return;
 
     const isDir = await isDirectory(fullPath);
+    const fileCount = isDir ? await countFiles(fullPath) : undefined;
     const suggested = getSuggestedPath(relativePath);
 
     // If we have a dotfiles repo, check status
@@ -675,6 +732,7 @@ export async function scanCommonDotfiles(
         suggested,
         sourcePath: sourceExists ? suggestedSourcePath : undefined,
         isDirectory: isDir,
+        fileCount,
         warning: getWarning(relativePath),
         status,
       });
@@ -684,6 +742,7 @@ export async function scanCommonDotfiles(
         name: relativePath,
         suggested,
         isDirectory: isDir,
+        fileCount,
         warning: getWarning(relativePath),
         status: 'available',
       });

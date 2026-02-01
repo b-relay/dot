@@ -14,6 +14,7 @@ import {
   resolveUnlinkedFiles,
   scanUnknownRepoFiles,
   configureUnknownFiles,
+  listDirectoryContents,
   UserCancelledError,
   intro,
   outro,
@@ -328,18 +329,56 @@ async function initImpl(options: InitOptions): Promise<void> {
     } else {
       p.log.step(`Available to migrate (${available.length}):`);
 
-      // Convert to selectable items
-      const selectableItems = available.map(df => ({
-        text: df.name,
-        description: df.warning ?? `-> ${df.suggested}`,
-        ...df,
-      }));
+      // Convert to selectable items with file count hints for folders
+      const selectableItems = available.map(df => {
+        let text = df.name;
+        if (df.isDirectory && df.fileCount !== undefined) {
+          text += `/ (${df.fileCount} ${df.fileCount === 1 ? 'item' : 'items'})`;
+        }
+        return {
+          text,
+          description: df.warning ?? `-> ${df.suggested}`,
+          ...df,
+        };
+      });
 
       // Multi-select which ones to migrate
-      selectedDotfiles = await selectItems(selectableItems, {
+      let initialSelection = await selectItems(selectableItems, {
         headerText: "Select dotfiles to migrate",
         multi: true,
       }) as DetectedDotfile[];
+
+      // For selected folders, offer to drill down and pick specific files
+      selectedDotfiles = [];
+      for (const df of initialSelection) {
+        if (df.isDirectory && df.fileCount && df.fileCount > 0) {
+          const drillDown = await confirm(
+            `${df.name} is a folder with ${df.fileCount} items. Select specific files instead of whole folder?`
+          );
+          if (drillDown) {
+            const contents = await listDirectoryContents(df.path, df.name, df.suggested);
+            if (contents.length > 0) {
+              const contentItems = contents.map(c => ({
+                text: c.name + (c.isDirectory ? '/' : ''),
+                description: `-> ${c.suggested}`,
+                ...c,
+              }));
+              const selectedFiles = await selectItems(contentItems, {
+                headerText: `Select files from ${df.name}`,
+                multi: true,
+              }) as DetectedDotfile[];
+              selectedDotfiles.push(...selectedFiles);
+            } else {
+              // Empty or error, include whole folder
+              selectedDotfiles.push(df);
+            }
+          } else {
+            selectedDotfiles.push(df);
+          }
+        } else {
+          selectedDotfiles.push(df);
+        }
+      }
     }
 
     // 4b. Scan for unknown repo files (not in COMMON_DOTFILES)
