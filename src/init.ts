@@ -11,6 +11,9 @@ import {
   confirm,
   buildLinksFromDotfiles,
   UserCancelledError,
+  intro,
+  outro,
+  cancel,
   type DetectedDotfile,
 } from "./wizard";
 import type { DotConfig, LinkMap } from "./types";
@@ -161,12 +164,14 @@ async function migrateDotfiles(
  * 9. Save state
  */
 export async function init(options: InitOptions = {}): Promise<void> {
+  intro('dot init - Setup your dotfiles');
+
   try {
     await initImpl(options);
   } catch (error) {
     if (error instanceof UserCancelledError) {
-      console.log("\nAborted.");
-      process.exit(1);
+      cancel('Operation cancelled');
+      process.exit(0);
     }
     throw error;
   }
@@ -185,7 +190,7 @@ async function initImpl(options: InitOptions): Promise<void> {
   const existingState = await loadState();
   if (existingState?.dotfilesPath && !options.force) {
     console.log(`Dotfiles already configured at: ${existingState.dotfilesPath}`);
-    if (!confirm("Reconfigure dotfiles?")) {
+    if (!(await confirm("Reconfigure dotfiles?"))) {
       console.log("Keeping existing configuration.");
       return;
     }
@@ -201,7 +206,7 @@ async function initImpl(options: InitOptions): Promise<void> {
 
     if (await pathExists(defaultDest)) {
       console.log(`Warning: ${defaultDest} already exists`);
-      if (!confirm("Continue anyway? (existing content may be overwritten)")) {
+      if (!(await confirm("Continue anyway? (existing content may be overwritten)"))) {
         console.log("Aborted.");
         return;
       }
@@ -215,7 +220,7 @@ async function initImpl(options: InitOptions): Promise<void> {
     dotfilesPath = defaultDest;
   } else {
     // Prompt for location
-    dotfilesPath = promptDotfilesLocation();
+    dotfilesPath = await promptDotfilesLocation();
   }
 
   // Create directory if it doesn't exist
@@ -230,7 +235,7 @@ async function initImpl(options: InitOptions): Promise<void> {
 
   if (config) {
     console.log("\nFound existing dot.config.json");
-    if (confirm("Use existing configuration?")) {
+    if (await confirm("Use existing configuration?")) {
       useExistingConfig = true;
     }
   }
@@ -265,8 +270,8 @@ async function initImpl(options: InitOptions): Promise<void> {
       }));
 
       // Multi-select which ones to migrate
-      selectedDotfiles = selectItems(selectableItems, {
-        headerText: "Select dotfiles to migrate (Enter to toggle, Done when finished)",
+      selectedDotfiles = await selectItems(selectableItems, {
+        headerText: "Select dotfiles to migrate",
         multi: true,
       }) as DetectedDotfile[];
     }
@@ -275,7 +280,7 @@ async function initImpl(options: InitOptions): Promise<void> {
     console.log("\nGenerating configuration...");
 
     // Ask about autoCommit
-    const autoCommit = confirm("Enable auto-commit when tracking new files?");
+    const autoCommit = await confirm("Enable auto-commit when tracking new files?");
 
     // Build links from selected dotfiles
     const links = buildLinksFromDotfiles(selectedDotfiles, dotfilesPath);
@@ -301,7 +306,7 @@ async function initImpl(options: InitOptions): Promise<void> {
       console.log("\nUncommitted changes in repo:");
       console.log(statusOutput);
 
-      if (confirm("Create initial commit?")) {
+      if (await confirm("Create initial commit?")) {
         await $`git -C ${dotfilesPath} add -A`.quiet();
         await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
         console.log("Created initial commit.");
@@ -318,7 +323,7 @@ async function initImpl(options: InitOptions): Promise<void> {
       return;
     }
 
-    if (!confirm("Create these symlinks?")) {
+    if (!(await confirm("Create these symlinks?"))) {
       console.log("Skipping symlink creation.");
     } else {
       // 8. Execute
@@ -341,13 +346,7 @@ async function initImpl(options: InitOptions): Promise<void> {
   });
 
   // Success message
-  console.log("\n" + "=".repeat(50));
-  console.log("Dotfiles initialized successfully!");
-  console.log(`  Location: ${dotfilesPath}`);
-  console.log(`  Config: ${dotfilesPath}/dot.config.json`);
-  console.log(`  Links: ${Object.keys(config!.links).length}`);
-  console.log("=".repeat(50));
-  console.log("\nRun 'dot doctor' to verify your setup.");
+  outro(`Dotfiles initialized at ${dotfilesPath}. Run 'dot doctor' to verify.`);
 }
 
 /**

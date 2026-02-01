@@ -1,4 +1,4 @@
-import { createPrompt, createSelection } from 'bun-promptx';
+import * as p from '@clack/prompts';
 import { stat, lstat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { LinkMap } from './types';
@@ -105,41 +105,46 @@ export class UserCancelledError extends Error {
 }
 
 /**
+ * Check if result is a cancellation and throw if so.
+ */
+function checkCancel<T>(result: T | symbol): T {
+  if (p.isCancel(result)) {
+    throw new UserCancelledError();
+  }
+  return result;
+}
+
+/**
  * Prompt user for dotfiles location with arrow-key selection.
  * Returns absolute path.
  * Throws UserCancelledError if user presses Ctrl+C.
  */
-export function promptDotfilesLocation(): string {
+export async function promptDotfilesLocation(): Promise<string> {
   const home = process.env.HOME ?? '';
   const defaultPath = `${home}/.dotfiles`;
 
-  const items = [
-    { text: defaultPath, description: 'Default location' },
-    { text: '[Enter custom path]', description: 'Specify a different location' },
-  ];
-
-  const result = createSelection(items, {
-    headerText: 'Where are your dotfiles?',
+  const result = await p.select({
+    message: 'Where are your dotfiles?',
+    options: [
+      { value: 'default', label: defaultPath, hint: 'default location' },
+      { value: 'custom', label: 'Enter custom path' },
+    ],
   });
 
-  if (result.error) {
-    throw new UserCancelledError();
-  }
+  checkCancel(result);
 
-  if (result.selectedIndex === 1) {
-    // User wants to enter custom path
-    console.log(''); // Add newline for better formatting
-    const promptResult = createPrompt('Enter path (e.g., ~/my-dotfiles): ');
-    if (promptResult.error || promptResult.value === null) {
-      throw new UserCancelledError();
-    }
-    const path = promptResult.value.trim();
-    if (!path) {
-      // Empty input, use default
-      console.log(`Using default: ${defaultPath}`);
-      return defaultPath;
-    }
-    return expandPath(path);
+  if (result === 'custom') {
+    const customPath = await p.text({
+      message: 'Enter dotfiles path:',
+      placeholder: '~/my-dotfiles',
+      validate: (value) => {
+        if (!value || !value.trim()) return 'Path is required';
+        return undefined;
+      },
+    });
+
+    checkCancel(customPath);
+    return expandPath(customPath as string);
   }
 
   return defaultPath;
@@ -178,86 +183,48 @@ export type SelectableItem = {
 };
 
 /**
- * Select items using arrow-key navigation.
- * Supports single or multi-select mode.
+ * Select items using multi-select checkboxes.
  * Throws UserCancelledError if user presses Ctrl+C.
  */
-export function selectItems<T extends SelectableItem>(
+export async function selectItems<T extends SelectableItem>(
   items: T[],
   options?: { headerText?: string; multi?: boolean }
-): T[] {
+): Promise<T[]> {
   if (items.length === 0) {
     return [];
   }
 
-  const selectionItems = items.map(i => ({
-    text: i.text,
-    description: i.description,
-  }));
-
-  // Note: bun-promptx createSelection doesn't have built-in multi-select
-  // For multi-select, we'll use a different approach: show checkboxes and loop
   if (options?.multi) {
-    // For multi-select, we'll present items with "Done" option
-    // User selects items one by one, "Done" finishes selection
-    const selected: T[] = [];
-    const remaining = [...items];
+    // Multi-select with checkboxes
+    const result = await p.multiselect({
+      message: options.headerText ?? 'Select items',
+      options: items.map((item, index) => ({
+        value: index,
+        label: item.text,
+        hint: item.description,
+      })),
+      required: false,
+    });
 
-    while (remaining.length > 0) {
-      const menuItems = [
-        { text: '[Done selecting]', description: `${selected.length} selected` },
-        { text: '[Select all]', description: 'Add all remaining items' },
-        ...remaining.map(i => ({ text: i.text, description: i.description })),
-      ];
+    checkCancel(result);
 
-      const result = createSelection(menuItems, {
-        headerText: options.headerText ?? 'Select items (press Enter to toggle)',
-      });
-
-      if (result.error) {
-        // User pressed Ctrl+C - abort entirely
-        throw new UserCancelledError();
-      }
-
-      const selectedIdx = result.selectedIndex;
-      if (selectedIdx === null || selectedIdx === 0) {
-        // Done selecting or null
-        break;
-      }
-
-      if (selectedIdx === 1) {
-        // Select all
-        selected.push(...remaining);
-        break;
-      }
-
-      // User selected an item (offset by 2 for Done and Select all)
-      const itemIndex = selectedIdx - 2;
-      const item = remaining[itemIndex];
-      if (item) {
-        selected.push(item);
-        remaining.splice(itemIndex, 1);
-      }
-    }
-
-    return selected;
+    // Map indices back to items
+    return (result as number[]).map(index => items[index]!);
   }
 
-  // Single select mode
-  const result = createSelection(selectionItems, {
-    headerText: options?.headerText,
+  // Single select
+  const result = await p.select({
+    message: options?.headerText ?? 'Select an item',
+    options: items.map((item, index) => ({
+      value: index,
+      label: item.text,
+      hint: item.description,
+    })),
   });
 
-  if (result.error) {
-    // User pressed Ctrl+C - abort entirely
-    throw new UserCancelledError();
-  }
+  checkCancel(result);
 
-  if (result.selectedIndex === null) {
-    return [];
-  }
-
-  const selectedItem = items[result.selectedIndex];
+  const selectedItem = items[result as number];
   return selectedItem ? [selectedItem] : [];
 }
 
@@ -327,40 +294,31 @@ export async function previewSymlinks(
 }
 
 /**
- * Confirmation prompt using selection UI.
- * Default focus is on 'No' for safety.
+ * Confirmation prompt.
  * Throws UserCancelledError if user presses Ctrl+C.
  */
-export function confirm(message: string): boolean {
-  const items = [
-    { text: 'No', description: 'Cancel' },
-    { text: 'Yes', description: 'Proceed' },
-  ];
-
-  const result = createSelection(items, {
-    headerText: message,
+export async function confirm(message: string): Promise<boolean> {
+  const result = await p.confirm({
+    message,
+    initialValue: false, // Default to No for safety
   });
 
-  if (result.error) {
-    // User pressed Ctrl+C - abort entirely
-    throw new UserCancelledError();
-  }
-
-  // Yes is at index 1
-  return result.selectedIndex === 1;
+  checkCancel(result);
+  return result as boolean;
 }
 
 /**
  * Prompt for a text input value.
  * Throws UserCancelledError if user presses Ctrl+C.
  */
-export function promptText(message: string): string | null {
-  const result = createPrompt(message);
-  if (result.error) {
-    // User pressed Ctrl+C - abort entirely
-    throw new UserCancelledError();
-  }
-  return result.value;
+export async function promptText(message: string, placeholder?: string): Promise<string | null> {
+  const result = await p.text({
+    message,
+    placeholder,
+  });
+
+  checkCancel(result);
+  return result as string;
 }
 
 /**
@@ -382,4 +340,25 @@ export function buildLinksFromDotfiles(
   }
 
   return links;
+}
+
+/**
+ * Display intro message for the wizard.
+ */
+export function intro(message: string): void {
+  p.intro(message);
+}
+
+/**
+ * Display outro message for the wizard.
+ */
+export function outro(message: string): void {
+  p.outro(message);
+}
+
+/**
+ * Cancel the wizard with a message.
+ */
+export function cancel(message: string): void {
+  p.cancel(message);
 }
