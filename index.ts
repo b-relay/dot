@@ -187,6 +187,13 @@ async function initializeDot(options: GlobalOptions): Promise<InitResult | null>
   // Get dotfiles path from priority chain
   let dotfilesPath = await getDotfilesPath({ dotfiles: options.dotfiles });
 
+  // Check if the configured path actually exists
+  if (dotfilesPath && !(await pathExists(dotfilesPath))) {
+    console.warn(`Warning: Previously configured dotfiles folder no longer exists: ${dotfilesPath}`);
+    console.warn("Run 'dot init' to reconfigure.");
+    dotfilesPath = null;
+  }
+
   // Backward compatibility: if no path found, check if ~/.dotfiles exists
   if (!dotfilesPath) {
     const defaultPath = `${home}/.dotfiles`;

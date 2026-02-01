@@ -250,7 +250,7 @@ async function initImpl(options: InitOptions): Promise<void> {
 
     // Categorize by status
     const alreadyLinked = foundDotfiles.filter(df => df.status === 'already-linked');
-    const alreadyTracked = foundDotfiles.filter(df => df.status === 'already-tracked');
+    const inRepo = foundDotfiles.filter(df => df.status === 'in-repo');
     const available = foundDotfiles.filter(df => df.status === 'available');
     const conflicts = foundDotfiles.filter(df => df.status === 'conflict');
 
@@ -258,14 +258,17 @@ async function initImpl(options: InitOptions): Promise<void> {
     if (alreadyLinked.length > 0) {
       p.log.success(`Already linked (${alreadyLinked.length}):`);
       for (const df of alreadyLinked) {
+        // Show actual source path from symlink, not assumed path
         console.log(`  ${df.name} -> ${df.suggested}`);
       }
     }
 
-    if (alreadyTracked.length > 0) {
-      p.log.info(`In repo, needs symlink (${alreadyTracked.length}):`);
-      for (const df of alreadyTracked) {
-        console.log(`  ${df.suggested}`);
+    if (inRepo.length > 0) {
+      p.log.info(`Available in repo - not yet linked (${inRepo.length}):`);
+      console.log("  These files exist in your dotfiles repo but don't have symlinks yet.");
+      console.log("  They will be included in your config for linking.\n");
+      for (const df of inRepo) {
+        console.log(`  ${df.suggested} -> ${df.name}`);
       }
     }
 
@@ -280,8 +283,8 @@ async function initImpl(options: InitOptions): Promise<void> {
     if (available.length === 0) {
       if (foundDotfiles.length === 0) {
         p.log.info("No common dotfiles found.");
-      } else {
-        p.log.info("All detected dotfiles are already tracked or linked.");
+      } else if (alreadyLinked.length > 0 || inRepo.length > 0) {
+        p.log.info("All detected dotfiles are already in the repo or linked.");
       }
     } else {
       p.log.step(`Available to migrate (${available.length}):`);
@@ -301,8 +304,8 @@ async function initImpl(options: InitOptions): Promise<void> {
     }
 
     // 5. Generate config
-    // Include already-tracked files in the config (they need symlinks)
-    const allToLink = [...selectedDotfiles, ...alreadyTracked];
+    // Include in-repo files (they need symlinks) and already-linked files (preserve existing config)
+    const allToLink = [...selectedDotfiles, ...inRepo, ...alreadyLinked];
 
     // Ask about autoCommit
     const autoCommit = await confirm("Enable auto-commit when tracking new files?");

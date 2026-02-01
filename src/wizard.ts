@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts';
-import { stat, lstat, readdir, mkdir } from 'node:fs/promises';
-import { resolve, dirname, basename } from 'node:path';
+import { stat, lstat, readdir, mkdir, readlink } from 'node:fs/promises';
+import { resolve, dirname, basename, relative } from 'node:path';
 import type { LinkMap } from './types';
 
 /**
@@ -9,16 +9,17 @@ import type { LinkMap } from './types';
 export type DotfileStatus =
   | 'available'      // File exists in home, not yet tracked
   | 'already-linked' // File is a symlink pointing to dotfiles repo
-  | 'already-tracked' // File exists in dotfiles repo (source exists)
-  | 'conflict';       // File exists in both places but not linked
+  | 'in-repo'        // File exists in dotfiles repo, not yet linked from home
+  | 'conflict';      // File exists in both places but not linked
 
 /**
  * Detected dotfile with metadata for migration wizard.
  */
 export type DetectedDotfile = {
-  path: string;           // Full path to the file (e.g., /Users/user/.gitconfig)
-  name: string;           // Filename (e.g., .gitconfig)
+  path: string;           // Full path to the file (e.g., /Users/user/.config/git/config)
+  name: string;           // Display name (e.g., .config/git/config)
   suggested: string;      // Suggested location in repo (e.g., git/.gitconfig)
+  sourcePath?: string;    // Actual source path in repo (for already-linked files)
   isDirectory: boolean;   // Whether it's a directory
   warning?: string;       // Warning message (e.g., for .ssh/config)
   status?: DotfileStatus; // Status relative to dotfiles repo
@@ -267,20 +268,33 @@ export async function promptDotfilesLocation(): Promise<string> {
 }
 
 /**
- * Check if a path is a symlink pointing to a location within the dotfiles repo.
+ * Get the resolved symlink target if path is a symlink pointing into dotfiles repo.
+ * Returns the absolute path to the source file in the repo, or null if not a symlink to repo.
  */
-async function isSymlinkTo(path: string, dotfilesPath: string): Promise<boolean> {
+async function getSymlinkSourceInRepo(path: string, dotfilesPath: string): Promise<string | null> {
   try {
     const fileStat = await lstat(path);
     if (!fileStat.isSymbolicLink()) {
-      return false;
+      return null;
     }
-    const target = await import('node:fs/promises').then(fs => fs.readlink(path));
+    const target = await readlink(path);
     const resolvedTarget = resolve(dirname(path), target);
-    return resolvedTarget.startsWith(dotfilesPath + '/') || resolvedTarget === dotfilesPath;
+
+    // Check if it points into the dotfiles repo
+    if (resolvedTarget.startsWith(dotfilesPath + '/') || resolvedTarget === dotfilesPath) {
+      return resolvedTarget;
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Get the relative path within the dotfiles repo from an absolute path.
+ */
+function getRelativeRepoPath(absolutePath: string, dotfilesPath: string): string {
+  return relative(dotfilesPath, absolutePath);
 }
 
 /**
@@ -314,18 +328,35 @@ export async function scanCommonDotfiles(
       continue;
     }
 
-    // Check if source exists in dotfiles repo
-    const sourcePath = resolve(dotfilesPath, entry.suggested);
-    const sourceExists = await pathExists(sourcePath);
+    // Check if it's already a symlink to our dotfiles - get ACTUAL source path
+    const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
+
+    if (actualSourcePath) {
+      // It's a symlink pointing into our repo - get the real relative path
+      const actualRelativePath = getRelativeRepoPath(actualSourcePath, dotfilesPath);
+      const isDir = await isDirectory(actualSourcePath);
+
+      found.push({
+        path: fullPath,
+        name: entry.path,
+        suggested: actualRelativePath, // Use actual path, not assumed
+        sourcePath: actualSourcePath,
+        isDirectory: isDir,
+        warning: entry.warning,
+        status: 'already-linked',
+      });
+      continue;
+    }
+
+    // Check if source exists in dotfiles repo at the suggested location
+    const suggestedSourcePath = resolve(dotfilesPath, entry.suggested);
+    const sourceExists = await pathExists(suggestedSourcePath);
 
     // Determine status
     let status: DotfileStatus;
 
     if (homeFileExists) {
-      // Check if it's already a symlink to our dotfiles
-      if (await isSymlinkTo(fullPath, dotfilesPath)) {
-        status = 'already-linked';
-      } else if (sourceExists) {
+      if (sourceExists) {
         // Both exist but not linked - conflict
         status = 'conflict';
       } else {
@@ -333,8 +364,8 @@ export async function scanCommonDotfiles(
         status = 'available';
       }
     } else if (sourceExists) {
-      // Source exists in repo but no home file - already tracked, needs symlink
-      status = 'already-tracked';
+      // Source exists in repo but no home file - in repo, can be linked
+      status = 'in-repo';
     } else {
       // Neither exists, skip
       continue;
@@ -342,12 +373,13 @@ export async function scanCommonDotfiles(
 
     const isDir = homeFileExists
       ? await isDirectory(fullPath)
-      : await isDirectory(sourcePath);
+      : await isDirectory(suggestedSourcePath);
 
     found.push({
       path: fullPath,
       name: entry.path,
       suggested: entry.suggested,
+      sourcePath: sourceExists ? suggestedSourcePath : undefined,
       isDirectory: isDir,
       warning: entry.warning,
       status,
@@ -515,8 +547,9 @@ export function buildLinksFromDotfiles(
   const links: LinkMap = {};
 
   for (const df of dotfiles) {
-    // Source is where file will live in the repo
-    const source = `${dotfilesPath}/${df.suggested}`;
+    // Use actual sourcePath if available (for already-linked files),
+    // otherwise build from suggested path
+    const source = df.sourcePath ?? `${dotfilesPath}/${df.suggested}`;
     // Target is where the symlink will be created (original location)
     const target = df.path;
     links[source] = target;
