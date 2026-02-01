@@ -257,9 +257,9 @@ async function initImpl(options: InitOptions): Promise<void> {
 
     // Show summary of what's already set up
     if (alreadyLinked.length > 0) {
-      p.log.success(`Already linked (${alreadyLinked.length}):`);
+      p.log.success(`Symlinks found pointing to your dotfiles repo (${alreadyLinked.length}):`);
       for (const df of alreadyLinked) {
-        // Show actual source path from symlink, not assumed path
+        // Show symlink location -> repo file
         console.log(`  ${df.name} -> ${df.suggested}`);
       }
     }

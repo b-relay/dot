@@ -298,14 +298,59 @@ function getRelativeRepoPath(absolutePath: string, dotfilesPath: string): string
 }
 
 /**
+ * Directories to skip when scanning home directory.
+ * These are large directories unlikely to contain dotfile symlinks.
+ */
+const HOME_SKIP_DIRS = new Set([
+  // User data directories (large, not config)
+  'Downloads', 'Documents', 'Desktop', 'Pictures', 'Music', 'Movies',
+  'Public', 'Applications', 'Dropbox', 'Google Drive', 'OneDrive', 'iCloud Drive',
+  // Development directories (can be huge)
+  'node_modules', '.npm', '.yarn', '.pnpm', '.bun',
+  'go', '.cargo', '.rustup', '.gradle', '.m2', '.ivy2',
+  '.virtualenvs', '.pyenv', '.rbenv', '.nvm', '.fnm',
+  // Cache and temp directories
+  '.cache', '.Trash', '.local', 'tmp', 'temp',
+  // Version control
+  '.git',
+  // IDE and editor directories (large, internal state)
+  '.vscode-server', '.cursor-server',
+  // macOS specific
+  'Library', // We'll scan Library/Application Support separately
+  // Common large hidden dirs
+  '.docker', '.vagrant', '.minikube',
+]);
+
+/**
+ * Directories to skip when scanning ~/Library/Application Support/
+ */
+const APP_SUPPORT_SKIP_DIRS = new Set([
+  // Large app data directories
+  'Steam', 'Epic', 'GOG.com', 'Battle.net',
+  'Google', 'Firefox', 'Chromium', 'Microsoft Edge',
+  'Slack', 'Discord', 'Spotify', 'zoom.us',
+  'Docker Desktop', 'Parallels',
+  'MobileSync', 'Application Support', // nested
+  'AddressBook', 'Calendars', 'CallHistoryDB',
+  'CloudDocs', 'FaceTime', 'Messages',
+]);
+
+/**
  * Recursively scan a directory for symlinks pointing into the dotfiles repo.
  * Returns a Map of symlink path -> source path in repo.
+ *
+ * @param dir - Directory to scan
+ * @param dotfilesPath - Path to dotfiles repo
+ * @param maxDepth - Maximum recursion depth
+ * @param currentDepth - Current recursion depth
+ * @param skipDirs - Set of directory names to skip
  */
 async function scanDirectoryForSymlinks(
   dir: string,
   dotfilesPath: string,
   maxDepth: number = 4,
-  currentDepth: number = 0
+  currentDepth: number = 0,
+  skipDirs: Set<string> = new Set()
 ): Promise<Map<string, string>> {
   const found = new Map<string, string>();
 
@@ -314,6 +359,11 @@ async function scanDirectoryForSymlinks(
   try {
     const entries = await readdir(dir);
     for (const entry of entries) {
+      // Skip directories in the skip list
+      if (skipDirs.has(entry)) {
+        continue;
+      }
+
       const fullPath = `${dir}/${entry}`;
       try {
         const entryStat = await lstat(fullPath);
@@ -329,7 +379,8 @@ async function scanDirectoryForSymlinks(
             fullPath,
             dotfilesPath,
             maxDepth,
-            currentDepth + 1
+            currentDepth + 1,
+            skipDirs
           );
           for (const [k, v] of subFound) {
             found.set(k, v);
@@ -362,7 +413,7 @@ export async function scanCommonDotfiles(
   const alreadyLinkedSources = new Set<string>();
 
   if (dotfilesPath) {
-    // Scan COMMON_DOTFILES paths (depth 1 for home root dotfiles)
+    // Scan COMMON_DOTFILES paths first
     for (const entry of COMMON_DOTFILES) {
       const fullPath = resolve(home, entry.path);
       const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
@@ -371,12 +422,40 @@ export async function scanCommonDotfiles(
       }
     }
 
-    // Recursively scan ~/.config with depth 4 to catch deeply nested symlinks
-    // like ~/.config/zsh/.zshrc, ~/.config/Code/User/settings.json, etc.
+    // Deep scan home directory (depth 3) - catches dotfiles in nested locations
+    // Skips large non-config directories like Downloads, Documents, node_modules, etc.
+    const homeSymlinks = await scanDirectoryForSymlinks(
+      home,
+      dotfilesPath,
+      3,
+      0,
+      HOME_SKIP_DIRS
+    );
+    for (const source of homeSymlinks.values()) {
+      alreadyLinkedSources.add(source);
+    }
+
+    // Deep scan ~/.config (depth 4) - most config files live here
     const configPath = `${home}/.config`;
     const configSymlinks = await scanDirectoryForSymlinks(configPath, dotfilesPath, 4);
     for (const source of configSymlinks.values()) {
       alreadyLinkedSources.add(source);
+    }
+
+    // On macOS, also scan ~/Library/Application Support (depth 4)
+    // This catches app configs like VS Code, Cursor, etc.
+    if (process.platform === 'darwin') {
+      const appSupportPath = `${home}/Library/Application Support`;
+      const appSupportSymlinks = await scanDirectoryForSymlinks(
+        appSupportPath,
+        dotfilesPath,
+        4,
+        0,
+        APP_SUPPORT_SKIP_DIRS
+      );
+      for (const source of appSupportSymlinks.values()) {
+        alreadyLinkedSources.add(source);
+      }
     }
   }
 
