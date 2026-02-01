@@ -405,7 +405,7 @@ export async function browseForPath(startPath: string): Promise<string> {
     }
 
     const result = await p.select({
-      message: `Browse: ${formatPath(currentPath)}`,
+      message: `Browse: ${currentPath}`,
       options,
     });
 
@@ -521,11 +521,12 @@ async function browseDirectory(startPath: string): Promise<string> {
     }
 
     // Selection options at the bottom
-    options.push({ value: '__select__', label: `✓ Select "${basename(currentPath)}"`, hint: 'use this folder' });
+    const folderName = basename(currentPath) || 'root';
+    options.push({ value: '__select__', label: `✓ Select "${folderName}"`, hint: 'use this folder' });
     options.push({ value: '__create__', label: '+ Create new folder here' });
 
     const result = await p.select({
-      message: `Browse: ${formatPath(currentPath)}`,
+      message: `📁 ${currentPath}`,
       options,
     });
 
