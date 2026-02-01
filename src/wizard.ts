@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts';
-import { stat, lstat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { stat, lstat, readdir, mkdir } from 'node:fs/promises';
+import { resolve, dirname, basename } from 'node:path';
 import type { LinkMap } from './types';
 
 /**
@@ -115,6 +115,122 @@ function checkCancel<T>(result: T | symbol): T {
 }
 
 /**
+ * Get subdirectories of a path, sorted alphabetically.
+ * Excludes hidden directories (starting with .) except for common dotfile locations.
+ */
+async function getSubdirectories(path: string): Promise<string[]> {
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort((a, b) => {
+        // Sort hidden dirs after visible ones
+        const aHidden = a.startsWith('.');
+        const bHidden = b.startsWith('.');
+        if (aHidden && !bHidden) return 1;
+        if (!aHidden && bHidden) return -1;
+        return a.localeCompare(b);
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Format a path for display, replacing home with ~
+ */
+function formatPath(path: string): string {
+  const home = process.env.HOME ?? '';
+  if (path === home) return '~';
+  if (path.startsWith(home + '/')) {
+    return '~' + path.slice(home.length);
+  }
+  return path;
+}
+
+/**
+ * Interactive directory browser.
+ * Allows navigation through directories with options to select or create.
+ * Returns the selected absolute path.
+ * Throws UserCancelledError if user presses Ctrl+C.
+ */
+async function browseDirectory(startPath: string): Promise<string> {
+  let currentPath = startPath;
+
+  while (true) {
+    const subdirs = await getSubdirectories(currentPath);
+    const parentPath = dirname(currentPath);
+    const canGoUp = parentPath !== currentPath; // Not at root
+
+    // Build options
+    const options: Array<{ value: string; label: string; hint?: string }> = [
+      { value: '__select__', label: 'Use this directory', hint: formatPath(currentPath) },
+      { value: '__create__', label: 'Create new folder here' },
+    ];
+
+    if (canGoUp) {
+      options.push({ value: '__up__', label: '..', hint: 'Go up' });
+    }
+
+    // Add subdirectories
+    for (const dir of subdirs) {
+      const isHidden = dir.startsWith('.');
+      options.push({
+        value: dir,
+        label: dir + '/',
+        hint: isHidden ? 'hidden' : undefined,
+      });
+    }
+
+    const result = await p.select({
+      message: `Browse: ${formatPath(currentPath)}`,
+      options,
+    });
+
+    checkCancel(result);
+
+    if (result === '__select__') {
+      return currentPath;
+    }
+
+    if (result === '__create__') {
+      const folderName = await p.text({
+        message: 'New folder name:',
+        placeholder: 'my-dotfiles',
+        validate: (value) => {
+          if (!value || !value.trim()) return 'Folder name is required';
+          if (value.includes('/')) return 'Folder name cannot contain /';
+          return undefined;
+        },
+      });
+
+      checkCancel(folderName);
+
+      const newPath = resolve(currentPath, folderName as string);
+
+      // Create the directory
+      try {
+        await mkdir(newPath, { recursive: true });
+        return newPath;
+      } catch (error) {
+        // If creation fails, show error and continue browsing
+        p.log.error(`Failed to create directory: ${error instanceof Error ? error.message : error}`);
+        continue;
+      }
+    }
+
+    if (result === '__up__') {
+      currentPath = parentPath;
+      continue;
+    }
+
+    // Navigate into selected directory
+    currentPath = resolve(currentPath, result as string);
+  }
+}
+
+/**
  * Prompt user for dotfiles location with arrow-key selection.
  * Returns absolute path.
  * Throws UserCancelledError if user presses Ctrl+C.
@@ -127,24 +243,14 @@ export async function promptDotfilesLocation(): Promise<string> {
     message: 'Where are your dotfiles?',
     options: [
       { value: 'default', label: defaultPath, hint: 'default location' },
-      { value: 'custom', label: 'Enter custom path' },
+      { value: 'browse', label: 'Browse for location', hint: 'navigate directories' },
     ],
   });
 
   checkCancel(result);
 
-  if (result === 'custom') {
-    const customPath = await p.text({
-      message: 'Enter dotfiles path:',
-      placeholder: '~/my-dotfiles',
-      validate: (value) => {
-        if (!value || !value.trim()) return 'Path is required';
-        return undefined;
-      },
-    });
-
-    checkCancel(customPath);
-    return expandPath(customPath as string);
+  if (result === 'browse') {
+    return browseDirectory(home);
   }
 
   return defaultPath;
