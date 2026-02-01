@@ -2,6 +2,7 @@ import {
   stat,
   readdir,
   lstat,
+  readlink,
   symlink,
   unlink,
   mkdir,
@@ -9,12 +10,16 @@ import {
   rm,
   rename,
 } from "node:fs/promises";
-import { dirname, resolve, relative, isAbsolute } from "node:path";
+import { dirname, resolve, relative, isAbsolute, basename } from "node:path";
 import { saveState } from "./state";
+import { updateConfigLinks, removeConfigLink } from "./config";
+import { browseForPath, UserCancelledError } from "./wizard";
 import type { DotConfig } from "./types";
+import * as p from "@clack/prompts";
 
 export type MoveOptions = {
   force?: boolean;
+  self?: boolean;  // --self to move the dotfiles folder itself
 };
 
 /**
@@ -42,7 +47,7 @@ async function isDirEmpty(path: string): Promise<boolean> {
     const files = await readdir(path);
     return files.length === 0;
   } catch {
-    return true; // Doesn't exist = effectively empty
+    return true;
   }
 }
 
@@ -67,128 +72,237 @@ function isPathInside(child: string, parent: string): boolean {
 }
 
 /**
- * Simple confirmation prompt
+ * Move a symlinked file to a different location.
+ * Keeps the file in the dotfiles repo, just changes where the symlink is.
  */
-async function confirm(message: string): Promise<boolean> {
-  process.stdout.write(`${message} [y/N] `);
+export async function move(
+  sourcePath: string | undefined,
+  dotfilesPath: string,
+  config: DotConfig,
+  options: MoveOptions = {}
+): Promise<void> {
+  p.intro("dot move");
 
-  // Use stdin for interactive input
-  const stdin = process.stdin;
-  stdin.setRawMode?.(false);
+  const home = process.env.HOME || "";
 
-  return new Promise((resolve) => {
-    const readline = require("readline");
-    const rl = readline.createInterface({
-      input: stdin,
-      output: process.stdout,
+  // 1. Select which symlink to move (from config.links)
+  const links = Object.entries(config.links);
+  if (links.length === 0) {
+    p.log.error("No linked files found in config");
+    return;
+  }
+
+  let selectedSource: string;
+  let selectedTarget: string;
+
+  if (sourcePath) {
+    // Find the link that matches the source path
+    const resolvedSource = resolve(sourcePath);
+    const match = links.find(([src]) => resolve(dotfilesPath, src) === resolvedSource);
+    if (!match) {
+      // Maybe they provided the target path instead
+      const targetMatch = links.find(([, tgt]) => expandPath(tgt) === resolvedSource);
+      if (targetMatch) {
+        [selectedSource, selectedTarget] = targetMatch;
+      } else {
+        p.log.error(`${sourcePath} is not a tracked file`);
+        return;
+      }
+    } else {
+      [selectedSource, selectedTarget] = match;
+    }
+  } else {
+    // Let user select from list
+    const linkOptions = links.map(([src, tgt]) => ({
+      value: src,
+      label: expandPath(tgt).replace(home, "~"),
+      hint: `-> ${src}`,
+    }));
+
+    const selected = await p.select({
+      message: "Select a linked file to move",
+      options: linkOptions,
     });
 
-    rl.question("", (answer: string) => {
-      rl.close();
-      resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
-    });
+    if (p.isCancel(selected)) {
+      p.log.warn("Cancelled");
+      return;
+    }
+
+    selectedSource = selected as string;
+    selectedTarget = config.links[selectedSource]!;
+  }
+
+  const currentTarget = expandPath(selectedTarget);
+  const repoFile = resolve(dotfilesPath, selectedSource);
+
+  // Verify the symlink exists and points to our repo
+  try {
+    const linkStat = await lstat(currentTarget);
+    if (!linkStat.isSymbolicLink()) {
+      p.log.error(`${currentTarget} is not a symlink`);
+      return;
+    }
+  } catch {
+    p.log.warn(`Symlink ${currentTarget} doesn't exist, will create at new location`);
+  }
+
+  // 2. Select new location
+  p.log.info(`Moving: ${currentTarget.replace(home, "~")}`);
+  p.log.info("Select new location for the symlink");
+
+  let newTarget: string;
+  try {
+    newTarget = await browseForPath(dirname(currentTarget));
+  } catch (error) {
+    if (error instanceof UserCancelledError) {
+      p.log.warn("Cancelled");
+      return;
+    }
+    throw error;
+  }
+
+  // If they selected a directory, put the file inside it
+  const newTargetStat = await stat(newTarget).catch(() => null);
+  if (newTargetStat?.isDirectory()) {
+    newTarget = resolve(newTarget, basename(currentTarget));
+  }
+
+  if (newTarget === currentTarget) {
+    p.log.info("Same location, nothing to do");
+    return;
+  }
+
+  // 3. Preview and confirm
+  p.log.step("Preview:");
+  console.log(`  Current: ${currentTarget.replace(home, "~")}`);
+  console.log(`  New:     ${newTarget.replace(home, "~")}`);
+  console.log(`  Points to: ${repoFile}`);
+
+  if (!options.force) {
+    const proceed = await p.confirm({ message: "Proceed?" });
+    if (p.isCancel(proceed) || !proceed) {
+      p.log.warn("Cancelled");
+      return;
+    }
+  }
+
+  // 4. Execute
+  const s = p.spinner();
+  s.start("Moving symlink...");
+
+  // Remove old symlink
+  try {
+    await unlink(currentTarget);
+  } catch {
+    // Might not exist
+  }
+
+  // Create parent directory if needed
+  await mkdir(dirname(newTarget), { recursive: true });
+
+  // Create new symlink
+  await symlink(repoFile, newTarget);
+
+  // Update config
+  const newTargetForConfig = newTarget.startsWith(home)
+    ? "~" + newTarget.slice(home.length)
+    : newTarget;
+
+  // Remove old link and add new one
+  await removeConfigLink(dotfilesPath, selectedSource);
+  await updateConfigLinks(dotfilesPath, {
+    source: selectedSource,
+    target: newTargetForConfig,
   });
+
+  s.stop("Moved successfully");
+
+  p.log.success(`Symlink moved to ${newTarget.replace(home, "~")}`);
 }
 
 /**
- * Move dotfiles folder to a new location.
- *
- * Flow:
- * 1. Validate new path (exists, empty, not subdirectory)
- * 2. Preview changes (show symlinks that will be updated)
- * 3. Execute move (rename or copy+delete for cross-device)
- * 4. Update symlinks to point to new location
- * 5. Update state with new path
- *
- * @param newPath Target path for dotfiles folder
- * @param currentPath Current dotfiles path
- * @param config DotConfig with links
- * @param options MoveOptions (force flag)
+ * Move the dotfiles folder itself to a new location.
+ * Updates all symlinks to point to the new location.
  */
-export async function move(
+export async function moveSelf(
   newPath: string,
   currentPath: string,
   config: DotConfig,
   options: MoveOptions = {}
 ): Promise<void> {
+  p.intro("dot move --self");
+
   // Resolve paths
   const resolvedNewPath = expandPath(newPath);
   const resolvedCurrentPath = resolve(currentPath);
 
   // Validate new path
-  // 1. Cannot move to subdirectory of itself
   if (isPathInside(resolvedNewPath, resolvedCurrentPath)) {
-    throw new Error("Cannot move to subdirectory of itself");
+    p.log.error("Cannot move to subdirectory of itself");
+    return;
   }
 
-  // 2. Check if destination exists and is not empty
   const destExists = await pathExists(resolvedNewPath);
   if (destExists) {
     const isEmpty = await isDirEmpty(resolvedNewPath);
     if (!isEmpty) {
       if (!options.force) {
-        throw new Error(
-          "Destination exists and is not empty. Use --force to override."
-        );
+        p.log.error("Destination exists and is not empty. Use --force to override.");
+        return;
       }
-      console.log(`Warning: Destination ${resolvedNewPath} is not empty`);
+      p.log.warn(`Destination ${resolvedNewPath} is not empty`);
     }
   }
 
-  // 3. Compute symlinks to update
+  // Compute symlinks to update
   const symlinksToUpdate: { target: string; oldSource: string; newSource: string }[] = [];
 
   for (const [source, target] of Object.entries(config.links)) {
-    // Source paths in config are relative to dotfiles root (e.g., "zsh/zshrc")
-    // Target paths use ~ notation (e.g., "~/.config/zsh/.zshrc")
     const oldSource = resolve(resolvedCurrentPath, source);
     const newSource = resolve(resolvedNewPath, source);
     const expandedTarget = expandPath(target);
-
     symlinksToUpdate.push({ target: expandedTarget, oldSource, newSource });
   }
 
-  // 4. Preview changes
-  console.log(`\nWill move: ${resolvedCurrentPath} -> ${resolvedNewPath}`);
-  console.log(`\nSymlinks to update (${symlinksToUpdate.length}):`);
-  for (const { target, newSource } of symlinksToUpdate) {
-    console.log(`  ${target} -> ${newSource}`);
-  }
+  // Preview
+  p.log.step("Preview:");
+  console.log(`  From: ${resolvedCurrentPath}`);
+  console.log(`  To:   ${resolvedNewPath}`);
+  console.log(`  Symlinks to update: ${symlinksToUpdate.length}`);
 
-  // 5. Confirmation
   if (!options.force) {
-    const confirmed = await confirm("\nProceed with move?");
-    if (!confirmed) {
-      console.log("Aborted.");
+    const proceed = await p.confirm({ message: "Proceed?" });
+    if (p.isCancel(proceed) || !proceed) {
+      p.log.warn("Cancelled");
       return;
     }
   }
 
-  // 6. Execute move
-  console.log("\nMoving folder...");
+  // Execute
+  const s = p.spinner();
+  s.start("Moving dotfiles folder...");
 
-  // Create parent directory if needed
+  // Create parent directory
   await mkdir(dirname(resolvedNewPath), { recursive: true });
 
-  // If destination exists and we have force, remove it first
+  // Remove destination if exists and force
   if (destExists && options.force) {
     await rm(resolvedNewPath, { recursive: true, force: true });
   }
 
-  // Try rename first (atomic, fast, same device)
+  // Try rename first
   let moved = false;
   try {
     await rename(resolvedCurrentPath, resolvedNewPath);
     moved = true;
   } catch (err: unknown) {
-    // Cross-device link error (EXDEV) or non-empty dir (ENOTEMPTY) - fall back to copy+delete
     if (
       err instanceof Error &&
       "code" in err &&
       (err.code === "EXDEV" || err.code === "ENOTEMPTY")
     ) {
-      console.log("Cross-device move, copying...");
-      // Remove destination if exists (for ENOTEMPTY case)
+      s.message("Cross-device move, copying...");
       if (await pathExists(resolvedNewPath)) {
         await rm(resolvedNewPath, { recursive: true, force: true });
       }
@@ -201,80 +315,72 @@ export async function move(
   }
 
   if (!moved) {
-    throw new Error("Failed to move folder");
+    s.stop("Failed");
+    p.log.error("Failed to move folder");
+    return;
   }
 
-  console.log("Folder moved successfully.");
+  s.message("Updating symlinks...");
 
-  // 7. Update symlinks
-  console.log("\nUpdating symlinks...");
-  const failures: { target: string; error: string }[] = [];
-
+  // Update symlinks
+  let updated = 0;
   for (const { target, newSource } of symlinksToUpdate) {
     try {
-      // Remove old symlink (if exists)
       try {
         const targetStat = await lstat(target);
         if (targetStat.isSymbolicLink()) {
           await unlink(target);
         }
       } catch {
-        // Target doesn't exist, that's fine
+        // Target doesn't exist
       }
 
-      // Create parent directory if needed
       await mkdir(dirname(target), { recursive: true });
 
-      // Check if source exists before creating symlink
       if (await pathExists(newSource)) {
         await symlink(newSource, target);
-        console.log(`  [updated] ${target}`);
-      } else {
-        console.log(`  [skipped] ${target} (source ${newSource} does not exist)`);
+        updated++;
       }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      failures.push({ target, error: errorMsg });
-      console.log(`  [error] ${target}: ${errorMsg}`);
+    } catch {
+      // Continue on error
     }
   }
 
-  if (failures.length > 0) {
-    console.log(`\n${failures.length} symlink(s) failed to update.`);
-  }
-
-  // 8. Update state
-  console.log("\nUpdating state...");
+  // Update state
   await saveState({
     dotfilesPath: resolvedNewPath,
     configuredAt: new Date().toISOString(),
   });
 
-  // 9. Verify key symlinks work
-  let workingSymlinks = 0;
-  for (const { target, newSource } of symlinksToUpdate) {
-    if (await pathExists(newSource)) {
-      try {
-        const targetStat = await lstat(target);
-        if (targetStat.isSymbolicLink()) {
-          workingSymlinks++;
-        }
-      } catch {
-        // Symlink doesn't exist
-      }
+  s.stop("Done");
+
+  p.log.success(`Dotfiles moved to ${resolvedNewPath}`);
+  p.log.info(`Symlinks updated: ${updated}/${symlinksToUpdate.length}`);
+
+  // Warn about cwd
+  const cwd = process.cwd();
+  if (isPathInside(cwd, resolvedCurrentPath) || cwd === resolvedCurrentPath) {
+    p.log.warn(`Your cwd was inside old location. Run: cd ${resolvedNewPath}`);
+  }
+}
+
+/**
+ * Parse move command arguments
+ */
+export function parseMoveArgs(args: string[]): { path?: string; options: MoveOptions } {
+  let path: string | undefined;
+  const options: MoveOptions = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--force" || arg === "-f") {
+      options.force = true;
+    } else if (arg === "--self") {
+      options.self = true;
+    } else if (!arg.startsWith("-")) {
+      path = arg;
     }
   }
 
-  console.log(`\nMove complete!`);
-  console.log(`  New location: ${resolvedNewPath}`);
-  console.log(`  Symlinks working: ${workingSymlinks}/${symlinksToUpdate.length}`);
-
-  // 10. Warn about cwd
-  const cwd = process.cwd();
-  if (isPathInside(cwd, resolvedCurrentPath) || cwd === resolvedCurrentPath) {
-    console.log(
-      `\nWarning: Your current directory was inside the old location.`
-    );
-    console.log(`Run: cd ${resolvedNewPath}`);
-  }
+  return { path, options };
 }

@@ -113,3 +113,29 @@ export async function updateConfigLinks(
 
   return result.data;
 }
+
+/**
+ * Remove a link from the config.
+ *
+ * @param dotfilesPath Path to the dotfiles repository
+ * @param source Source path (key in links map) to remove
+ * @returns Updated config or null if config doesn't exist
+ */
+export async function removeConfigLink(
+  dotfilesPath: string,
+  source: string
+): Promise<DotConfig | null> {
+  const config = await loadConfig(dotfilesPath);
+
+  if (!config) {
+    return null;
+  }
+
+  // Remove the link
+  delete config.links[source];
+
+  // Write updated config
+  await writeConfig(dotfilesPath, config);
+
+  return config;
+}

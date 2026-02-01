@@ -13,11 +13,11 @@ import {
 import { dirname, resolve, isAbsolute } from "node:path";
 import { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
 import { getDotfilesPath, loadState, saveState } from "./src/state";
-import { track, parseTrackArgs } from "./src/track";
-import type { TrackOptions } from "./src/track";
+import { link, parseLinkArgs } from "./src/link";
+import type { LinkOptions } from "./src/link";
 import { init, parseInitArgs } from "./src/init";
 import type { InitOptions } from "./src/init";
-import { move } from "./src/move";
+import { move, moveSelf, parseMoveArgs } from "./src/move";
 import type { MoveOptions } from "./src/move";
 import { update } from "./src/update";
 import type { DotConfig, LinkMap, DotState, Dependency, BrewfileConfig } from "./src/types";
@@ -114,33 +114,6 @@ function parseInstallArgs(): InstallOptions {
     values.force === true || values.force === "true";
 
   return { force };
-}
-
-type ParsedMoveArgs = {
-  targetPath: string | undefined;
-  options: MoveOptions;
-};
-
-export function parseMoveArgs(args: string[]): ParsedMoveArgs {
-  const { values, positionals } = parseArgs({
-    args,
-    options: {
-      force: {
-        type: "boolean",
-        short: "f",
-        default: false,
-      },
-    },
-    strict: false,
-    allowPositionals: true,
-  });
-
-  const force = values.force === true || values.force === "true";
-
-  return {
-    targetPath: positionals[0],
-    options: { force },
-  };
 }
 
 type InitResult = {
@@ -1289,11 +1262,13 @@ function help() {
   );
   console.log("  doctor ignore [path]  Exclude path from doctor for 90 days");
   console.log("    --cwd         Start browser from current directory");
-  console.log("  track <path>    Add file to dotfiles repo and create symlink");
-  console.log("    --as <path>   Specify destination path in repo (e.g., --as zsh/aliases)");
+  console.log("  link [path]     Add file to dotfiles repo and create symlink");
+  console.log("    --as <path>   Destination in repo (e.g., --as zsh/aliases)");
+  console.log("    --cwd         Start browser from current directory");
   console.log("    --force, -f   Skip confirmations");
-  console.log("  move <path>     Relocate dotfiles folder to new location");
-  console.log("    --force, -f   Override if destination exists");
+  console.log("  move [source]   Move a linked file to different location");
+  console.log("    --self        Move the dotfiles folder itself");
+  console.log("    --force, -f   Skip confirmations");
   console.log("  update          Check for and install updates");
   console.log("  help            Show this help message");
   console.log("");
@@ -1411,56 +1386,33 @@ async function main() {
       }
       break;
     }
-    case "track": {
-      // Parse track-specific args (everything after "track")
-      const trackIdx = args.indexOf("track");
-      const trackArgs = trackIdx >= 0 ? args.slice(trackIdx + 1) : [];
-      const { targetPath, options: trackOptions } = parseTrackArgs(trackArgs);
+    case "link": {
+      // Parse link-specific args (everything after "link")
+      const linkIdx = args.indexOf("link");
+      const linkArgs = linkIdx >= 0 ? args.slice(linkIdx + 1) : [];
+      const { targetPath, options: linkOptions } = parseLinkArgs(linkArgs);
 
-      if (!targetPath) {
-        console.log("Usage: dot track <path> [--as <dest>] [--force]");
-        console.log("");
-        console.log("Add a file or directory to your dotfiles repo.");
-        console.log("");
-        console.log("Options:");
-        console.log("  --as <path>   Destination path in repo (e.g., --as zsh/aliases)");
-        console.log("  --force, -f   Skip confirmations and auto-backup on conflict");
-        process.exit(1);
-      }
-
-      await track(targetPath, dotfilesPath, dotConfig, trackOptions);
+      // No path required - will open browser if not provided
+      await link(targetPath, dotfilesPath, dotConfig, linkOptions);
       break;
     }
     case "move": {
       // Parse move-specific args (everything after "move")
       const moveIdx = args.indexOf("move");
       const moveArgs = moveIdx >= 0 ? args.slice(moveIdx + 1) : [];
-      const { targetPath: newPath, options: moveOptions } = parseMoveArgs(moveArgs);
+      const { path: movePath, options: moveOptions } = parseMoveArgs(moveArgs);
 
-      if (!newPath) {
-        console.log("Usage: dot move <path> [--force]");
-        console.log("");
-        console.log("Relocate dotfiles folder to a new location.");
-        console.log("All symlinks will be updated to point to the new location.");
-        console.log("");
-        console.log("Options:");
-        console.log("  --force, -f   Override if destination exists");
-        console.log("");
-        console.log("Examples:");
-        console.log("  dot move ~/dotfiles");
-        console.log("  dot move /path/to/new/location --force");
-        process.exit(1);
+      if (moveOptions.self) {
+        // Move the dotfiles folder itself
+        if (!movePath) {
+          p.log.error("Usage: dot move --self <destination>");
+          process.exit(1);
+        }
+        await moveSelf(movePath, dotfilesPath, dotConfig, moveOptions);
+      } else {
+        // Move a symlinked file to a different location
+        await move(movePath, dotfilesPath, dotConfig, moveOptions);
       }
-
-      // Check if running from inside dotfiles folder
-      const cwd = process.cwd();
-      if (cwd.startsWith(dotfilesPath) || cwd === dotfilesPath) {
-        console.log("Warning: You are running this command from inside the dotfiles folder.");
-        console.log("After the move, your current directory will become invalid.");
-        console.log("");
-      }
-
-      await move(newPath, dotfilesPath, dotConfig, moveOptions);
       break;
     }
     default:
@@ -1488,14 +1440,14 @@ export const __test = {
 };
 
 // Re-export config and state modules
-export { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
+export { loadConfig, writeConfig, updateConfigLinks, removeConfigLink } from "./src/config";
 export { getDotfilesPath, loadState, saveState } from "./src/state";
-export { track, parseTrackArgs } from "./src/track";
-export { move } from "./src/move";
+export { link, parseLinkArgs } from "./src/link";
+export { move, moveSelf, parseMoveArgs } from "./src/move";
 export { update } from "./src/update";
 export { VERSION };
 export type { DotConfig, LinkMap, DotState } from "./src/types";
-export type { TrackOptions } from "./src/track";
+export type { LinkOptions } from "./src/link";
 export type { MoveOptions } from "./src/move";
 
 // Exports for testing
