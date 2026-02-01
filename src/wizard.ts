@@ -308,6 +308,21 @@ export async function scanCommonDotfiles(
 ): Promise<DetectedDotfile[]> {
   const found: DetectedDotfile[] = [];
 
+  // First pass: collect all symlinks pointing to dotfiles repo
+  // This lets us know which repo files are already linked from ANY location
+  const alreadyLinkedSources = new Set<string>();
+
+  if (dotfilesPath) {
+    for (const entry of COMMON_DOTFILES) {
+      const fullPath = resolve(home, entry.path);
+      const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
+      if (actualSourcePath) {
+        alreadyLinkedSources.add(actualSourcePath);
+      }
+    }
+  }
+
+  // Second pass: categorize each entry
   for (const entry of COMMON_DOTFILES) {
     const fullPath = resolve(home, entry.path);
     const homeFileExists = await pathExists(fullPath);
@@ -351,6 +366,11 @@ export async function scanCommonDotfiles(
     // Check if source exists in dotfiles repo at the suggested location
     const suggestedSourcePath = resolve(dotfilesPath, entry.suggested);
     const sourceExists = await pathExists(suggestedSourcePath);
+
+    // If this repo file is already linked from a DIFFERENT location, skip it
+    if (sourceExists && alreadyLinkedSources.has(suggestedSourcePath)) {
+      continue;
+    }
 
     // Determine status
     let status: DotfileStatus;
