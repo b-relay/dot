@@ -332,12 +332,14 @@ async function initImpl(options: InitOptions): Promise<void> {
       // Convert to selectable items with file count hints for folders
       const selectableItems = available.map(df => {
         let text = df.name;
+        let description = df.warning ?? `-> ${df.suggested}`;
         if (df.isDirectory && df.fileCount !== undefined) {
           text += `/ (${df.fileCount} ${df.fileCount === 1 ? 'item' : 'items'})`;
+          description = 'select to review contents';
         }
         return {
           text,
-          description: df.warning ?? `-> ${df.suggested}`,
+          description,
           ...df,
         };
       });
@@ -352,14 +354,34 @@ async function initImpl(options: InitOptions): Promise<void> {
       selectedDotfiles = [];
       for (const df of initialSelection) {
         if (df.isDirectory && df.fileCount && df.fileCount > 0) {
-          const drillDown = await confirm(
-            `${df.name} is a folder with ${df.fileCount} items. Select specific files instead of whole folder?`
-          );
-          if (drillDown) {
-            const contents = await listDirectoryContents(df.path, df.name, df.suggested);
-            if (contents.length > 0) {
+          const contents = await listDirectoryContents(df.path, df.name, df.suggested);
+          if (contents.length > 0) {
+            p.log.info(`\n${df.name}/ contains ${df.fileCount} items:`);
+            for (const c of contents.slice(0, 5)) {
+              console.log(`  ${c.name.split('/').pop()}${c.isDirectory ? '/' : ''}`);
+            }
+            if (contents.length > 5) {
+              console.log(`  ... and ${contents.length - 5} more`);
+            }
+
+            const action = await p.select({
+              message: `How do you want to handle ${df.name}/?`,
+              options: [
+                { value: 'all', label: 'Include entire folder', hint: 'migrate everything' },
+                { value: 'pick', label: 'Pick specific files', hint: 'choose which to include' },
+                { value: 'skip', label: 'Skip this folder', hint: 'don\'t migrate any of it' },
+              ],
+            });
+
+            if (p.isCancel(action)) {
+              throw new UserCancelledError();
+            }
+
+            if (action === 'all') {
+              selectedDotfiles.push(df);
+            } else if (action === 'pick') {
               const contentItems = contents.map(c => ({
-                text: c.name + (c.isDirectory ? '/' : ''),
+                text: c.name.split('/').pop() + (c.isDirectory ? '/' : ''),
                 description: `-> ${c.suggested}`,
                 ...c,
               }));
@@ -368,11 +390,10 @@ async function initImpl(options: InitOptions): Promise<void> {
                 multi: true,
               }) as DetectedDotfile[];
               selectedDotfiles.push(...selectedFiles);
-            } else {
-              // Empty or error, include whole folder
-              selectedDotfiles.push(df);
             }
+            // 'skip' does nothing - folder not added
           } else {
+            // Empty folder, include it anyway
             selectedDotfiles.push(df);
           }
         } else {
