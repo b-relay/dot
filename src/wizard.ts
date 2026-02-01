@@ -1102,19 +1102,45 @@ export async function selectItems<T extends SelectableItem>(
 }
 
 /**
+ * Symlink status for preview display.
+ */
+export type SymlinkPreviewStatus =
+  | 'new'           // Target doesn't exist, source exists
+  | 'will-create'   // Neither target nor source exist yet
+  | 'already-linked' // Symlink pointing to correct source
+  | 'wrong-target'  // Symlink pointing elsewhere
+  | 'conflict';     // Real file exists at target
+
+/**
+ * Result of symlink preview.
+ */
+export type PreviewResult = {
+  safe: boolean;
+  hasConflicts: boolean;
+  hasWrongTargets: boolean;
+  items: Array<{
+    source: string;
+    target: string;
+    status: SymlinkPreviewStatus;
+    actualTarget?: string; // For wrong-target: where it actually points
+  }>;
+};
+
+/**
  * Preview symlinks that will be created.
  * Shows source -> target with status indicators.
- * Returns true if safe to proceed (no conflicts without force).
+ * Returns detailed preview result including status of each symlink.
  */
 export async function previewSymlinks(
   links: LinkMap,
   dotfilesPath: string
-): Promise<{ safe: boolean; hasConflicts: boolean }> {
+): Promise<PreviewResult> {
   console.log('\nSymlink preview:');
   console.log('================\n');
 
-  let hasNew = false;
   let hasConflicts = false;
+  let hasWrongTargets = false;
+  const items: PreviewResult['items'] = [];
 
   for (const [source, target] of Object.entries(links)) {
     // Check if source exists in dotfiles
@@ -1123,37 +1149,64 @@ export async function previewSymlinks(
     // Check if target already exists
     const targetExists = await pathExists(target);
 
-    let status: string;
+    let status: SymlinkPreviewStatus;
+    let statusDisplay: string;
+    let actualTarget: string | undefined;
+
     if (!sourceExists) {
-      status = '[will create]';
-      hasNew = true;
+      status = 'will-create';
+      statusDisplay = '[will create]';
     } else if (!targetExists) {
-      status = '[new]';
-      hasNew = true;
+      status = 'new';
+      statusDisplay = '[new]';
     } else {
-      // Check if it's already a symlink pointing to our source
+      // Target exists - check if it's a symlink and where it points
       try {
         const targetStat = await lstat(target);
         if (targetStat.isSymbolicLink()) {
-          // It's a symlink - would need to check if it points to right place
-          status = '[exists]';
+          // Read where the symlink actually points
+          const linkTarget = await readlink(target);
+          const resolvedTarget = resolve(dirname(target), linkTarget);
+
+          // Compare resolved target with expected source
+          if (resolvedTarget === source) {
+            status = 'already-linked';
+            statusDisplay = '[already linked]';
+          } else {
+            status = 'wrong-target';
+            statusDisplay = '[wrong target]';
+            actualTarget = resolvedTarget;
+            hasWrongTargets = true;
+          }
         } else {
-          status = '[conflict]';
+          status = 'conflict';
+          statusDisplay = '[conflict]';
           hasConflicts = true;
         }
       } catch {
-        status = '[conflict]';
+        status = 'conflict';
+        statusDisplay = '[conflict]';
         hasConflicts = true;
       }
     }
+
+    items.push({ source, target, status, actualTarget });
 
     // Display relative to dotfiles for cleaner output
     const displaySource = source.startsWith(dotfilesPath)
       ? source.slice(dotfilesPath.length + 1)
       : source;
 
-    console.log(`  ${status.padEnd(14)} ${displaySource}`);
-    console.log(`                 -> ${target}`);
+    console.log(`  ${statusDisplay.padEnd(16)} ${displaySource}`);
+    console.log(`                   -> ${target}`);
+
+    // Show where wrong target points for debugging
+    if (actualTarget) {
+      const displayActual = actualTarget.startsWith(dotfilesPath)
+        ? actualTarget.slice(dotfilesPath.length + 1)
+        : actualTarget;
+      console.log(`                   (currently -> ${displayActual})`);
+    }
   }
 
   console.log('');
@@ -1163,7 +1216,12 @@ export async function previewSymlinks(
     console.log('Use --force to overwrite, or move/remove them first.\n');
   }
 
-  return { safe: !hasConflicts, hasConflicts };
+  if (hasWrongTargets) {
+    console.log('Note: Some symlinks point to different targets.');
+    console.log('Use --force to update them to the correct targets.\n');
+  }
+
+  return { safe: !hasConflicts && !hasWrongTargets, hasConflicts, hasWrongTargets, items };
 }
 
 /**
@@ -1196,20 +1254,29 @@ export async function promptText(message: string, placeholder?: string): Promise
 
 /**
  * Build a LinkMap from selected dotfiles.
- * Maps source (in dotfiles repo) to target (original location).
+ * Maps source (relative to dotfiles repo) to target (with ~ for home).
+ * Using relative paths ensures portability across machines and `dot move --self`.
  */
 export function buildLinksFromDotfiles(
   dotfiles: DetectedDotfile[],
   dotfilesPath: string
 ): LinkMap {
   const links: LinkMap = {};
+  const home = process.env.HOME ?? '';
 
   for (const df of dotfiles) {
-    // Use actual sourcePath if available (for already-linked files),
-    // otherwise build from suggested path
-    const source = df.sourcePath ?? `${dotfilesPath}/${df.suggested}`;
-    // Target is where the symlink will be created (original location)
-    const target = df.path;
+    // Store source RELATIVE to dotfiles root for portability
+    // e.g., "zsh/zshrc" not "/Users/brendon/.dotfiles/zsh/zshrc"
+    const source = df.sourcePath
+      ? relative(dotfilesPath, df.sourcePath)
+      : df.suggested;
+
+    // Store target with ~ for home directory portability
+    // e.g., "~/.config/zsh/.zshrc" not "/Users/brendon/.config/zsh/.zshrc"
+    const target = df.path.startsWith(home)
+      ? '~' + df.path.slice(home.length)
+      : df.path;
+
     links[source] = target;
   }
 
