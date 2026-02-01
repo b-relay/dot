@@ -254,6 +254,7 @@ async function initImpl(options: InitOptions): Promise<void> {
 
     // Categorize by status
     const alreadyLinked = foundDotfiles.filter(df => df.status === 'already-linked');
+    const brokenLinks = foundDotfiles.filter(df => df.status === 'broken-link');
     const inRepo = foundDotfiles.filter(df => df.status === 'in-repo');
     const available = foundDotfiles.filter(df => df.status === 'available');
     const conflicts = foundDotfiles.filter(df => df.status === 'conflict');
@@ -264,6 +265,14 @@ async function initImpl(options: InitOptions): Promise<void> {
       for (const df of alreadyLinked) {
         // Show symlink location -> repo file
         console.log(`  ${df.name} -> ${df.suggested}`);
+      }
+    }
+
+    // Show broken symlinks with warning
+    if (brokenLinks.length > 0) {
+      p.log.warn(`Broken symlinks (${brokenLinks.length}):`);
+      for (const df of brokenLinks) {
+        console.log(`  ${df.name} -> ${df.suggested} (target missing)`);
       }
     }
 

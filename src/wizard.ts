@@ -9,6 +9,7 @@ import type { LinkMap } from './types';
 export type DotfileStatus =
   | 'available'      // File exists in home, not yet tracked
   | 'already-linked' // File is a symlink pointing to dotfiles repo
+  | 'broken-link'    // Symlink points to dotfiles repo but target doesn't exist
   | 'in-repo'        // File exists in dotfiles repo, not yet linked from home
   | 'conflict';      // File exists in both places but not linked
 
@@ -268,10 +269,19 @@ export async function promptDotfilesLocation(): Promise<string> {
 }
 
 /**
- * Get the resolved symlink target if path is a symlink pointing into dotfiles repo.
- * Returns the absolute path to the source file in the repo, or null if not a symlink to repo.
+ * Result of checking a symlink's status relative to the dotfiles repo.
  */
-async function getSymlinkSourceInRepo(path: string, dotfilesPath: string): Promise<string | null> {
+type SymlinkCheckResult = {
+  sourcePath: string;    // Absolute path the symlink points to in the repo
+  targetExists: boolean; // Whether the target file actually exists
+} | null;
+
+/**
+ * Get the resolved symlink target if path is a symlink pointing into dotfiles repo.
+ * Returns the absolute path to the source file in the repo and whether it exists,
+ * or null if not a symlink to repo.
+ */
+async function checkSymlinkToRepo(path: string, dotfilesPath: string): Promise<SymlinkCheckResult> {
   try {
     const fileStat = await lstat(path);
     if (!fileStat.isSymbolicLink()) {
@@ -282,12 +292,24 @@ async function getSymlinkSourceInRepo(path: string, dotfilesPath: string): Promi
 
     // Check if it points into the dotfiles repo
     if (resolvedTarget.startsWith(dotfilesPath + '/') || resolvedTarget === dotfilesPath) {
-      return resolvedTarget;
+      // Check if target actually exists
+      const targetExists = await pathExists(resolvedTarget);
+      return { sourcePath: resolvedTarget, targetExists };
     }
     return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Get the resolved symlink target if path is a symlink pointing into dotfiles repo.
+ * Returns the absolute path to the source file in the repo, or null if not a symlink to repo.
+ * @deprecated Use checkSymlinkToRepo for more detailed information
+ */
+async function getSymlinkSourceInRepo(path: string, dotfilesPath: string): Promise<string | null> {
+  const result = await checkSymlinkToRepo(path, dotfilesPath);
+  return result?.sourcePath ?? null;
 }
 
 /**
@@ -336,8 +358,16 @@ const APP_SUPPORT_SKIP_DIRS = new Set([
 ]);
 
 /**
+ * Info about a discovered symlink pointing to the dotfiles repo.
+ */
+type DiscoveredSymlink = {
+  sourcePath: string;    // Path in repo the symlink points to
+  targetExists: boolean; // Whether the target actually exists
+};
+
+/**
  * Recursively scan a directory for symlinks pointing into the dotfiles repo.
- * Returns a Map of symlink path -> source path in repo.
+ * Returns a Map of symlink path -> discovered symlink info.
  *
  * @param dir - Directory to scan
  * @param dotfilesPath - Path to dotfiles repo
@@ -351,8 +381,8 @@ async function scanDirectoryForSymlinks(
   maxDepth: number = 4,
   currentDepth: number = 0,
   skipDirs: Set<string> = new Set()
-): Promise<Map<string, string>> {
-  const found = new Map<string, string>();
+): Promise<Map<string, DiscoveredSymlink>> {
+  const found = new Map<string, DiscoveredSymlink>();
 
   if (currentDepth >= maxDepth) return found;
 
@@ -369,9 +399,9 @@ async function scanDirectoryForSymlinks(
         const entryStat = await lstat(fullPath);
 
         if (entryStat.isSymbolicLink()) {
-          const source = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
-          if (source) {
-            found.set(fullPath, source);
+          const result = await checkSymlinkToRepo(fullPath, dotfilesPath);
+          if (result) {
+            found.set(fullPath, result);
           }
         } else if (entryStat.isDirectory() && !entry.startsWith('.git')) {
           // Recurse into subdirectory (skip .git directories)
@@ -410,16 +440,16 @@ export async function scanCommonDotfiles(
 
   // First pass: collect all symlinks pointing to dotfiles repo
   // This lets us know which repo files are already linked from ANY location
-  // Map: symlink path -> source path in repo
-  const allDiscoveredSymlinks = new Map<string, string>();
+  // Map: symlink path -> discovered symlink info (source path + whether target exists)
+  const allDiscoveredSymlinks = new Map<string, DiscoveredSymlink>();
 
   if (dotfilesPath) {
     // Scan COMMON_DOTFILES paths first
     for (const entry of COMMON_DOTFILES) {
       const fullPath = resolve(home, entry.path);
-      const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
-      if (actualSourcePath) {
-        allDiscoveredSymlinks.set(fullPath, actualSourcePath);
+      const result = await checkSymlinkToRepo(fullPath, dotfilesPath);
+      if (result) {
+        allDiscoveredSymlinks.set(fullPath, result);
       }
     }
 
@@ -432,15 +462,15 @@ export async function scanCommonDotfiles(
       0,
       HOME_SKIP_DIRS
     );
-    for (const [symlinkPath, sourcePath] of homeSymlinks) {
-      allDiscoveredSymlinks.set(symlinkPath, sourcePath);
+    for (const [symlinkPath, info] of homeSymlinks) {
+      allDiscoveredSymlinks.set(symlinkPath, info);
     }
 
     // Deep scan ~/.config (depth 4) - most config files live here
     const configPath = `${home}/.config`;
     const configSymlinks = await scanDirectoryForSymlinks(configPath, dotfilesPath, 4);
-    for (const [symlinkPath, sourcePath] of configSymlinks) {
-      allDiscoveredSymlinks.set(symlinkPath, sourcePath);
+    for (const [symlinkPath, info] of configSymlinks) {
+      allDiscoveredSymlinks.set(symlinkPath, info);
     }
 
     // On macOS, also scan ~/Library/Application Support (depth 4)
@@ -454,14 +484,19 @@ export async function scanCommonDotfiles(
         0,
         APP_SUPPORT_SKIP_DIRS
       );
-      for (const [symlinkPath, sourcePath] of appSupportSymlinks) {
-        allDiscoveredSymlinks.set(symlinkPath, sourcePath);
+      for (const [symlinkPath, info] of appSupportSymlinks) {
+        allDiscoveredSymlinks.set(symlinkPath, info);
       }
     }
   }
 
   // Build set of all source paths that are already linked (for filtering later)
-  const alreadyLinkedSources = new Set(allDiscoveredSymlinks.values());
+  // Only count working symlinks, not broken ones
+  const alreadyLinkedSources = new Set(
+    Array.from(allDiscoveredSymlinks.values())
+      .filter(info => info.targetExists)
+      .map(info => info.sourcePath)
+  );
 
   // Second pass: categorize each entry
   for (const entry of COMMON_DOTFILES) {
@@ -484,22 +519,23 @@ export async function scanCommonDotfiles(
       continue;
     }
 
-    // Check if it's already a symlink to our dotfiles - get ACTUAL source path
-    const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
+    // Check if it's already a symlink to our dotfiles
+    const symlinkInfo = allDiscoveredSymlinks.get(fullPath);
 
-    if (actualSourcePath) {
+    if (symlinkInfo) {
       // It's a symlink pointing into our repo - get the real relative path
-      const actualRelativePath = getRelativeRepoPath(actualSourcePath, dotfilesPath);
-      const isDir = await isDirectory(actualSourcePath);
+      const actualRelativePath = getRelativeRepoPath(symlinkInfo.sourcePath, dotfilesPath);
+      // For broken symlinks, isDirectory is false since target doesn't exist
+      const isDir = symlinkInfo.targetExists ? await isDirectory(symlinkInfo.sourcePath) : false;
 
       found.push({
         path: fullPath,
         name: entry.path,
         suggested: actualRelativePath, // Use actual path, not assumed
-        sourcePath: actualSourcePath,
+        sourcePath: symlinkInfo.sourcePath,
         isDirectory: isDir,
         warning: entry.warning,
-        status: 'already-linked',
+        status: symlinkInfo.targetExists ? 'already-linked' : 'broken-link',
       });
       continue;
     }
@@ -552,7 +588,7 @@ export async function scanCommonDotfiles(
   if (dotfilesPath) {
     const alreadyAddedPaths = new Set(found.map(f => f.path));
 
-    for (const [symlinkPath, sourcePath] of allDiscoveredSymlinks) {
+    for (const [symlinkPath, info] of allDiscoveredSymlinks) {
       // Skip if already added from COMMON_DOTFILES processing
       if (alreadyAddedPaths.has(symlinkPath)) {
         continue;
@@ -560,16 +596,17 @@ export async function scanCommonDotfiles(
 
       // Get relative paths for display
       const nameRelativeToHome = relative(home, symlinkPath);
-      const suggestedRelativeToRepo = getRelativeRepoPath(sourcePath, dotfilesPath);
-      const isDir = await isDirectory(sourcePath);
+      const suggestedRelativeToRepo = getRelativeRepoPath(info.sourcePath, dotfilesPath);
+      // For broken symlinks, isDirectory is false since target doesn't exist
+      const isDir = info.targetExists ? await isDirectory(info.sourcePath) : false;
 
       found.push({
         path: symlinkPath,
         name: nameRelativeToHome,
         suggested: suggestedRelativeToRepo,
-        sourcePath: sourcePath,
+        sourcePath: info.sourcePath,
         isDirectory: isDir,
-        status: 'already-linked',
+        status: info.targetExists ? 'already-linked' : 'broken-link',
       });
     }
   }
