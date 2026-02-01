@@ -410,7 +410,8 @@ export async function scanCommonDotfiles(
 
   // First pass: collect all symlinks pointing to dotfiles repo
   // This lets us know which repo files are already linked from ANY location
-  const alreadyLinkedSources = new Set<string>();
+  // Map: symlink path -> source path in repo
+  const allDiscoveredSymlinks = new Map<string, string>();
 
   if (dotfilesPath) {
     // Scan COMMON_DOTFILES paths first
@@ -418,7 +419,7 @@ export async function scanCommonDotfiles(
       const fullPath = resolve(home, entry.path);
       const actualSourcePath = await getSymlinkSourceInRepo(fullPath, dotfilesPath);
       if (actualSourcePath) {
-        alreadyLinkedSources.add(actualSourcePath);
+        allDiscoveredSymlinks.set(fullPath, actualSourcePath);
       }
     }
 
@@ -431,15 +432,15 @@ export async function scanCommonDotfiles(
       0,
       HOME_SKIP_DIRS
     );
-    for (const source of homeSymlinks.values()) {
-      alreadyLinkedSources.add(source);
+    for (const [symlinkPath, sourcePath] of homeSymlinks) {
+      allDiscoveredSymlinks.set(symlinkPath, sourcePath);
     }
 
     // Deep scan ~/.config (depth 4) - most config files live here
     const configPath = `${home}/.config`;
     const configSymlinks = await scanDirectoryForSymlinks(configPath, dotfilesPath, 4);
-    for (const source of configSymlinks.values()) {
-      alreadyLinkedSources.add(source);
+    for (const [symlinkPath, sourcePath] of configSymlinks) {
+      allDiscoveredSymlinks.set(symlinkPath, sourcePath);
     }
 
     // On macOS, also scan ~/Library/Application Support (depth 4)
@@ -453,11 +454,14 @@ export async function scanCommonDotfiles(
         0,
         APP_SUPPORT_SKIP_DIRS
       );
-      for (const source of appSupportSymlinks.values()) {
-        alreadyLinkedSources.add(source);
+      for (const [symlinkPath, sourcePath] of appSupportSymlinks) {
+        allDiscoveredSymlinks.set(symlinkPath, sourcePath);
       }
     }
   }
+
+  // Build set of all source paths that are already linked (for filtering later)
+  const alreadyLinkedSources = new Set(allDiscoveredSymlinks.values());
 
   // Second pass: categorize each entry
   for (const entry of COMMON_DOTFILES) {
@@ -541,6 +545,33 @@ export async function scanCommonDotfiles(
       warning: entry.warning,
       status,
     });
+  }
+
+  // Third pass: add discovered symlinks that weren't in COMMON_DOTFILES
+  // These are symlinks found during deep scanning that point to our dotfiles repo
+  if (dotfilesPath) {
+    const alreadyAddedPaths = new Set(found.map(f => f.path));
+
+    for (const [symlinkPath, sourcePath] of allDiscoveredSymlinks) {
+      // Skip if already added from COMMON_DOTFILES processing
+      if (alreadyAddedPaths.has(symlinkPath)) {
+        continue;
+      }
+
+      // Get relative paths for display
+      const nameRelativeToHome = relative(home, symlinkPath);
+      const suggestedRelativeToRepo = getRelativeRepoPath(sourcePath, dotfilesPath);
+      const isDir = await isDirectory(sourcePath);
+
+      found.push({
+        path: symlinkPath,
+        name: nameRelativeToHome,
+        suggested: suggestedRelativeToRepo,
+        sourcePath: sourcePath,
+        isDirectory: isDir,
+        status: 'already-linked',
+      });
+    }
   }
 
   return found;
