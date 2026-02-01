@@ -1,7 +1,8 @@
 import * as p from '@clack/prompts';
+import pc from 'picocolors';
 import { stat, lstat, readdir, mkdir, readlink } from 'node:fs/promises';
 import { resolve, dirname, basename, relative } from 'node:path';
-import type { LinkMap } from './types';
+import type { LinkMap, CustomPatterns } from './types';
 
 /**
  * Status of a detected dotfile relative to the dotfiles repo.
@@ -152,6 +153,79 @@ const SKIP_CONFIG_ENTRIES = new Set([
   'npm',
   'pnpm',
 ]);
+
+/**
+ * Directories to filter from directory browser.
+ * These appear as disabled (greyed out) with explanatory hint.
+ */
+const FILTERED_DIRS = new Set([
+  // System directories
+  'tmp', 'var', 'private', 'System', 'Volumes',
+  // Common caches
+  'node_modules', '.git', '.svn', '.hg',
+  'Library', // On macOS, too large/not useful
+  '__pycache__', '.pytest_cache', '.mypy_cache',
+  'target', // Rust/Maven
+  'build', 'dist', '.next', '.nuxt',
+  // Package manager caches
+  '.npm', '.yarn', '.pnpm', '.bun',
+]);
+
+/**
+ * Default patterns for low-value dotfiles (caches, temp, history).
+ * These are shown in "Other files" section with annotation.
+ */
+const DEFAULT_LOW_VALUE_PATTERNS = [
+  // Exact matches
+  '.DS_Store', '.localized', 'Thumbs.db', 'desktop.ini',
+  '.CFUserTextEncoding',
+  // History files
+  '.zsh_history', '.bash_history', '.node_repl_history', '.python_history',
+  '.lesshst', '.wget-hsts',
+  // Sessions
+  '.zsh_sessions', '.bash_sessions',
+  // Caches
+  '.cache', '.tmp',
+];
+
+/**
+ * Pattern suffixes for low-value files.
+ */
+const LOW_VALUE_SUFFIXES = ['_history', '.log', '.bak', '.swp', '.swo'];
+
+/**
+ * Check if a filename matches low-value patterns.
+ * Accepts optional custom patterns from config.
+ */
+export function isLowValueFile(
+  name: string,
+  customPatterns?: CustomPatterns
+): boolean {
+  // High-value overrides take priority
+  if (customPatterns?.highValue?.includes(name)) return false;
+
+  // Check custom low-value patterns
+  if (customPatterns?.lowValue?.includes(name)) return true;
+
+  // Check default patterns
+  if (DEFAULT_LOW_VALUE_PATTERNS.includes(name)) return true;
+
+  return LOW_VALUE_SUFFIXES.some(suffix => name.endsWith(suffix));
+}
+
+/**
+ * Get annotation for a low-value file based on its name.
+ */
+export function getLowValueAnnotation(name: string): string {
+  if (name.includes('history') || name.endsWith('_history')) return 'history file';
+  if (name.includes('cache') || name === '.cache') return 'cache';
+  if (name === '.DS_Store' || name === 'Thumbs.db' || name === 'desktop.ini') return 'system file';
+  if (name === '.localized' || name === '.CFUserTextEncoding') return 'system file';
+  if (name.endsWith('.log')) return 'log file';
+  if (name.endsWith('.bak') || name.endsWith('.swp') || name.endsWith('.swo')) return 'backup/swap file';
+  if (name.includes('session')) return 'session data';
+  return 'temp/cache';
+}
 
 /**
  * Expand ~ to home directory and resolve to absolute path.

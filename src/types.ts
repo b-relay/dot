@@ -24,10 +24,21 @@ export type Dependency = z.infer<typeof DependencySchema>;
 export const BrewfileConfigSchema = z.object({
   /** Path to brewfile relative to dotfiles root (default: "homebrew/brewfile") */
   path: z.string().default("homebrew/brewfile"),
-  /** Package types to exclude from sync (e.g., ["vscode", "cargo", "go"]) */
-  exclude: z.array(z.string()).default(["vscode", "cargo", "go"]),
+  /** Package type prefixes to exclude from sync (e.g., ["vscode", "mas"]) */
+  exclude: z.array(z.string()).default(["vscode"]),
 });
 export type BrewfileConfig = z.infer<typeof BrewfileConfigSchema>;
+
+/**
+ * Custom patterns for file classification in init wizard.
+ */
+export const CustomPatternsSchema = z.object({
+  /** Additional patterns to treat as low-value (caches, history, temp files) */
+  lowValue: z.array(z.string()).optional(),
+  /** Patterns to always treat as valuable (overrides lowValue classification) */
+  highValue: z.array(z.string()).optional(),
+});
+export type CustomPatterns = z.infer<typeof CustomPatternsSchema>;
 
 /**
  * Main dot configuration file schema.
@@ -43,6 +54,8 @@ export const DotConfigSchema = z.object({
   brewfile: BrewfileConfigSchema.optional(),
   /** Extra patterns to ignore during init scan (added to built-in skip list) */
   ignorePatterns: z.array(z.string()).optional(),
+  /** Custom patterns for file classification (low-value vs valuable) */
+  customPatterns: CustomPatternsSchema.optional(),
 });
 export type DotConfig = z.infer<typeof DotConfigSchema>;
 
