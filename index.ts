@@ -94,9 +94,10 @@ function parseInstallArgs(): InstallOptions {
     allowPositionals: true,
   });
 
-  return {
-    force: values.force ?? false,
-  };
+  const force =
+    values.force === true || values.force === "true";
+
+  return { force };
 }
 
 function createConfig(home?: string): Config {
