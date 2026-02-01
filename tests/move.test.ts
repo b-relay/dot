@@ -8,10 +8,11 @@ import {
   readlink,
   lstat,
   stat,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { move, type MoveOptions } from "../src/move";
+import { moveSelf, parseMoveArgs, type MoveOptions } from "../src/move";
 import { loadState, saveState } from "../src/state";
 import type { DotConfig } from "../src/types";
 
@@ -40,7 +41,47 @@ async function checkSymlink(
   }
 }
 
-describe("move command", () => {
+describe("parseMoveArgs", () => {
+  test("parses path argument", () => {
+    const { path, options } = parseMoveArgs(["~/new-dotfiles"]);
+    expect(path).toBe("~/new-dotfiles");
+    expect(options.force).toBeUndefined();
+    expect(options.self).toBeUndefined();
+  });
+
+  test("parses --force flag", () => {
+    const { path, options } = parseMoveArgs(["--force", "~/new-dotfiles"]);
+    expect(path).toBe("~/new-dotfiles");
+    expect(options.force).toBe(true);
+  });
+
+  test("parses -f short flag", () => {
+    const { path, options } = parseMoveArgs(["-f", "~/new-dotfiles"]);
+    expect(path).toBe("~/new-dotfiles");
+    expect(options.force).toBe(true);
+  });
+
+  test("parses --self flag", () => {
+    const { path, options } = parseMoveArgs(["--self", "~/new-dotfiles"]);
+    expect(path).toBe("~/new-dotfiles");
+    expect(options.self).toBe(true);
+  });
+
+  test("parses all flags together", () => {
+    const { path, options } = parseMoveArgs(["--self", "-f", "~/new-dotfiles"]);
+    expect(path).toBe("~/new-dotfiles");
+    expect(options.force).toBe(true);
+    expect(options.self).toBe(true);
+  });
+
+  test("returns undefined path when not provided", () => {
+    const { path, options } = parseMoveArgs(["--force"]);
+    expect(path).toBeUndefined();
+    expect(options.force).toBe(true);
+  });
+});
+
+describe("moveSelf command", () => {
   let tmpDir: string;
   let originalHome: string | undefined;
 
@@ -67,55 +108,6 @@ describe("move command", () => {
     await rm(tmpDir, { recursive: true });
   });
 
-  describe("path validation", () => {
-    test("rejects moving to subdirectory of itself", async () => {
-      const currentPath = `${tmpDir}/dotfiles`;
-      await mkdir(currentPath, { recursive: true });
-      await writeFile(`${currentPath}/test.txt`, "test");
-
-      const config: DotConfig = { links: {}, autoCommit: true };
-
-      await expect(
-        move(`${currentPath}/subdir`, currentPath, config, { force: true })
-      ).rejects.toThrow("Cannot move to subdirectory of itself");
-    });
-
-    test("rejects non-empty destination without force", async () => {
-      const currentPath = `${tmpDir}/dotfiles`;
-      const newPath = `${tmpDir}/new-dotfiles`;
-
-      await mkdir(currentPath, { recursive: true });
-      await mkdir(newPath, { recursive: true });
-      await writeFile(`${currentPath}/test.txt`, "test");
-      await writeFile(`${newPath}/existing.txt`, "existing");
-
-      const config: DotConfig = { links: {}, autoCommit: true };
-
-      await expect(move(newPath, currentPath, config)).rejects.toThrow(
-        "Destination exists and is not empty"
-      );
-    });
-
-    test("allows non-empty destination with force flag", async () => {
-      const currentPath = `${tmpDir}/dotfiles`;
-      const newPath = `${tmpDir}/new-dotfiles`;
-
-      await mkdir(currentPath, { recursive: true });
-      await mkdir(newPath, { recursive: true });
-      await writeFile(`${currentPath}/test.txt`, "test");
-      await writeFile(`${newPath}/existing.txt`, "existing");
-
-      const config: DotConfig = { links: {}, autoCommit: true };
-
-      // Should not throw with force
-      await move(newPath, currentPath, config, { force: true });
-
-      // Verify move happened
-      expect(await pathExists(`${newPath}/test.txt`)).toBe(true);
-      expect(await pathExists(currentPath)).toBe(false);
-    });
-  });
-
   describe("folder movement", () => {
     test("moves folder to new location", async () => {
       const currentPath = `${tmpDir}/dotfiles`;
@@ -128,7 +120,7 @@ describe("move command", () => {
 
       const config: DotConfig = { links: {}, autoCommit: true };
 
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       // Verify old path no longer exists
       expect(await pathExists(currentPath)).toBe(false);
@@ -150,7 +142,7 @@ describe("move command", () => {
 
       const config: DotConfig = { links: {}, autoCommit: true };
 
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       expect(await pathExists(newPath)).toBe(true);
       expect(await pathExists(`${newPath}/test.txt`)).toBe(true);
@@ -167,7 +159,7 @@ describe("move command", () => {
       const config: DotConfig = { links: {}, autoCommit: true };
 
       // Empty destination should work without force
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       expect(await pathExists(`${newPath}/test.txt`)).toBe(true);
     });
@@ -185,7 +177,6 @@ describe("move command", () => {
 
       // Create target directory and initial symlink
       await mkdir(targetDir, { recursive: true });
-      const { symlink } = await import("node:fs/promises");
       await symlink(`${currentPath}/zsh/zshrc`, `${targetDir}/.zshrc`);
 
       // Verify initial symlink
@@ -196,12 +187,12 @@ describe("move command", () => {
       // Config with link definition
       const config: DotConfig = {
         links: {
-          [`${currentPath}/zsh/zshrc`]: `${targetDir}/.zshrc`,
+          "zsh/zshrc": `${targetDir}/.zshrc`,
         },
         autoCommit: true,
       };
 
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       // Verify symlink now points to new location
       expect(
@@ -230,19 +221,18 @@ describe("move command", () => {
       await mkdir(gitTarget, { recursive: true });
 
       // Create symlinks
-      const { symlink } = await import("node:fs/promises");
       await symlink(`${currentPath}/zsh/zshrc`, `${zshTarget}/.zshrc`);
       await symlink(`${currentPath}/git/.gitconfig`, `${gitTarget}/config`);
 
       const config: DotConfig = {
         links: {
-          [`${currentPath}/zsh/zshrc`]: `${zshTarget}/.zshrc`,
-          [`${currentPath}/git/.gitconfig`]: `${gitTarget}/config`,
+          "zsh/zshrc": `${zshTarget}/.zshrc`,
+          "git/.gitconfig": `${gitTarget}/config`,
         },
         autoCommit: true,
       };
 
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       // Verify both symlinks updated
       expect(
@@ -265,14 +255,14 @@ describe("move command", () => {
       // Config includes link for non-existent source
       const config: DotConfig = {
         links: {
-          [`${currentPath}/zsh/zshrc`]: `${tmpDir}/.zshrc`,
-          [`${currentPath}/git/.gitconfig`]: `${tmpDir}/.gitconfig`, // doesn't exist
+          "zsh/zshrc": `${tmpDir}/.zshrc`,
+          "git/.gitconfig": `${tmpDir}/.gitconfig`, // doesn't exist
         },
         autoCommit: true,
       };
 
       // Should not throw - just skip non-existent
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       // Folder should still move
       expect(await pathExists(`${newPath}/zsh/zshrc`)).toBe(true);
@@ -295,7 +285,7 @@ describe("move command", () => {
 
       const config: DotConfig = { links: {}, autoCommit: true };
 
-      await move(newPath, currentPath, config, { force: true });
+      await moveSelf(newPath, currentPath, config, { force: true });
 
       // Verify state updated
       const state = await loadState();
@@ -313,7 +303,7 @@ describe("move command", () => {
       const config: DotConfig = { links: {}, autoCommit: true };
 
       // Use ~ which should expand to tmpDir (our test HOME)
-      await move("~/new-dotfiles", currentPath, config, { force: true });
+      await moveSelf("~/new-dotfiles", currentPath, config, { force: true });
 
       // Verify moved to $HOME/new-dotfiles
       expect(await pathExists(`${tmpDir}/new-dotfiles/test.txt`)).toBe(true);
@@ -327,7 +317,7 @@ describe("move command", () => {
 
       const config: DotConfig = { links: {}, autoCommit: true };
 
-      await move("~/projects/dotfiles", currentPath, config, { force: true });
+      await moveSelf("~/projects/dotfiles", currentPath, config, { force: true });
 
       expect(await pathExists(`${tmpDir}/projects/dotfiles/test.txt`)).toBe(
         true

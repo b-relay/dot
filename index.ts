@@ -1464,7 +1464,6 @@ export {
   type GlobalOptions,
   // Constants
   REVIEW_EXPIRY_DAYS,
-  DEPENDENCIES,
   // Functions
   createConfig,
   getLegacyLinks,

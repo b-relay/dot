@@ -1273,55 +1273,56 @@ export async function resolveUnlinkedFiles(
     p.log.info(`File: ${df.suggested}`);
     console.log(`  Expected to link to: ${df.name}`);
 
-    const pathResult = await p.text({
-      message: `Symlink path (or press Enter to skip):`,
-      placeholder: '~/.config/...',
-      validate: async (value) => {
-        if (!value || !value.trim()) {
-          return undefined; // Allow empty to skip
-        }
-
-        // Expand ~ and resolve path
-        const expandedPath = expandPath(value.trim());
-
-        // Check if it exists
-        try {
-          const pathStat = await lstat(expandedPath);
-          if (!pathStat.isSymbolicLink()) {
-            return 'Path exists but is not a symlink';
-          }
-
-          // Check if it points to the expected source
-          const target = await readlink(expandedPath);
-          const resolvedTarget = resolve(dirname(expandedPath), target);
-          if (resolvedTarget !== expectedSource) {
-            return `Symlink points to ${resolvedTarget}, expected ${expectedSource}`;
-          }
-
-          return undefined; // Valid
-        } catch {
-          return 'Path does not exist';
-        }
-      },
-    });
-
-    checkCancel(pathResult);
-
-    const pathValue = (pathResult as string)?.trim();
-
-    if (!pathValue) {
-      // User skipped - keep as in-repo
-      resolved.push(df);
-    } else {
-      // User provided valid symlink path - mark as already-linked
-      const expandedPath = expandPath(pathValue);
-      resolved.push({
-        ...df,
-        path: expandedPath,
-        sourcePath: expectedSource,
-        status: 'already-linked',
+    // Loop until valid input or skip
+    let validPath: string | null = null;
+    while (validPath === null) {
+      const pathResult = await p.text({
+        message: `Symlink path (or press Enter to skip):`,
+        placeholder: '~/.config/...',
       });
-      p.log.success(`Linked: ${df.suggested} <- ${formatPath(expandedPath)}`);
+
+      checkCancel(pathResult);
+
+      const pathValue = (pathResult as string)?.trim();
+
+      if (!pathValue) {
+        // User skipped - keep as in-repo
+        resolved.push(df);
+        break;
+      }
+
+      // Expand ~ and resolve path
+      const expandedPath = expandPath(pathValue);
+
+      // Check if it exists and is valid
+      try {
+        const pathStat = await lstat(expandedPath);
+        if (!pathStat.isSymbolicLink()) {
+          p.log.error('Path exists but is not a symlink');
+          continue;
+        }
+
+        // Check if it points to the expected source
+        const target = await readlink(expandedPath);
+        const resolvedTarget = resolve(dirname(expandedPath), target);
+        if (resolvedTarget !== expectedSource) {
+          p.log.error(`Symlink points to ${resolvedTarget}, expected ${expectedSource}`);
+          continue;
+        }
+
+        // Valid - mark as already-linked
+        validPath = expandedPath;
+        resolved.push({
+          ...df,
+          path: expandedPath,
+          sourcePath: expectedSource,
+          status: 'already-linked',
+        });
+        p.log.success(`Linked: ${df.suggested} <- ${formatPath(expandedPath)}`);
+      } catch {
+        p.log.error('Path does not exist');
+        continue;
+      }
     }
   }
 

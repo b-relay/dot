@@ -7,7 +7,7 @@
   "scripts": {
     "build": "bun build --compile index.ts --outfile dot",
     "build:release": "bun build --compile --minify index.ts --outfile dot",
-    "deploy": "bun run build && mkdir -p ~/.local/bin && cp dot ~/.local/bin/dot && chmod +x ~/.local/bin/dot",
+    "deploy": "bun run build:release && mkdir -p ~/.local/bin && cp dot ~/.local/bin/dot && chmod +x ~/.local/bin/dot",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },

@@ -2,52 +2,52 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, mkdir, writeFile, lstat, readlink, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { track, parseTrackArgs } from "../src/track";
+import { link, parseLinkArgs } from "../src/link";
 import { loadConfig } from "../src/config";
 import type { DotConfig } from "../src/types";
 import { $ } from "bun";
 
-describe("parseTrackArgs", () => {
+describe("parseLinkArgs", () => {
   it("parses target path", () => {
-    const { targetPath, options } = parseTrackArgs(["~/.testrc"]);
+    const { targetPath, options } = parseLinkArgs(["~/.testrc"]);
     expect(targetPath).toBe("~/.testrc");
     expect(options.as).toBeUndefined();
     expect(options.force).toBeUndefined();
   });
 
   it("parses --as option", () => {
-    const { targetPath, options } = parseTrackArgs(["~/.testrc", "--as", "zsh/testrc"]);
+    const { targetPath, options } = parseLinkArgs(["~/.testrc", "--as", "zsh/testrc"]);
     expect(targetPath).toBe("~/.testrc");
     expect(options.as).toBe("zsh/testrc");
   });
 
   it("parses --force option", () => {
-    const { targetPath, options } = parseTrackArgs(["~/.testrc", "--force"]);
+    const { targetPath, options } = parseLinkArgs(["~/.testrc", "--force"]);
     expect(targetPath).toBe("~/.testrc");
     expect(options.force).toBe(true);
   });
 
   it("parses -f short flag", () => {
-    const { targetPath, options } = parseTrackArgs(["-f", "~/.testrc"]);
+    const { targetPath, options } = parseLinkArgs(["-f", "~/.testrc"]);
     expect(targetPath).toBe("~/.testrc");
     expect(options.force).toBe(true);
   });
 
   it("parses all options together", () => {
-    const { targetPath, options } = parseTrackArgs(["--as", "test/file", "-f", "~/.myrc"]);
+    const { targetPath, options } = parseLinkArgs(["--as", "test/file", "-f", "~/.myrc"]);
     expect(targetPath).toBe("~/.myrc");
     expect(options.as).toBe("test/file");
     expect(options.force).toBe(true);
   });
 });
 
-describe("track command", () => {
+describe("link command", () => {
   let tempDir: string;
   let dotfilesPath: string;
   let originalHome: string | undefined;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "dot-track-"));
+    tempDir = await mkdtemp(join(tmpdir(), "dot-link-"));
     dotfilesPath = join(tempDir, "dotfiles");
     originalHome = process.env.HOME;
     process.env.HOME = tempDir;
@@ -74,7 +74,7 @@ describe("track command", () => {
 
     const config: DotConfig = { links: {}, autoCommit: false };
 
-    await track(testFile, dotfilesPath, config, { as: "zsh/testrc", force: true });
+    await link(testFile, dotfilesPath, config, { as: "zsh/testrc", force: true });
 
     // File should be moved to dotfiles
     const destPath = join(dotfilesPath, "zsh/testrc");
@@ -100,7 +100,7 @@ describe("track command", () => {
 
     const config: DotConfig = { links: {}, autoCommit: false };
 
-    await track(testFile, dotfilesPath, config, { as: "test/configrc", force: true });
+    await link(testFile, dotfilesPath, config, { as: "test/configrc", force: true });
 
     const updatedConfig = await loadConfig(dotfilesPath);
     // Should use ~/ format for home directory paths
@@ -113,7 +113,7 @@ describe("track command", () => {
 
     const config: DotConfig = { links: {}, autoCommit: true };
 
-    await track(testFile, dotfilesPath, config, { as: "misc/autorc", force: true });
+    await link(testFile, dotfilesPath, config, { as: "misc/autorc", force: true });
 
     // Check git log for commit
     const log = await $`git -C ${dotfilesPath} log --oneline -1`.text();
@@ -126,7 +126,7 @@ describe("track command", () => {
 
     const config: DotConfig = { links: {}, autoCommit: false };
 
-    await track(testFile, dotfilesPath, config, { as: "misc/nocommitrc", force: true });
+    await link(testFile, dotfilesPath, config, { as: "misc/nocommitrc", force: true });
 
     // Git should have uncommitted changes
     const status = await $`git -C ${dotfilesPath} status --porcelain`.text();
@@ -144,7 +144,7 @@ describe("track command", () => {
 
     const config: DotConfig = { links: {}, autoCommit: false };
 
-    await track(testFile, dotfilesPath, config, { as: "zsh/existing", force: true });
+    await link(testFile, dotfilesPath, config, { as: "zsh/existing", force: true });
 
     // Backup should exist
     const backupContent = await readFile(`${existingPath}.bak`, "utf8");
@@ -161,7 +161,7 @@ describe("track command", () => {
 
     const config: DotConfig = { links: {}, autoCommit: false };
 
-    await track(testFile, dotfilesPath, config, { as: "config/apps/deeprc", force: true });
+    await link(testFile, dotfilesPath, config, { as: "config/apps/deeprc", force: true });
 
     // Nested directory should be created
     const destPath = join(dotfilesPath, "config/apps/deeprc");
