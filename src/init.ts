@@ -248,7 +248,7 @@ async function initImpl(options: InitOptions): Promise<void> {
   if (!useExistingConfig) {
     // 4. Scan for existing dotfiles (with awareness of what's in dotfiles repo)
     const s = p.spinner();
-    s.start('Scanning for symlinks to your dotfiles...');
+    s.start('Scanning for symlinks (skipping Downloads, node_modules, caches)...');
     const foundDotfiles = await scanCommonDotfiles(home, dotfilesPath);
     s.stop('Scan complete');
 
