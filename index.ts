@@ -21,6 +21,7 @@ import { move } from "./src/move";
 import type { MoveOptions } from "./src/move";
 import { update } from "./src/update";
 import type { DotConfig, LinkMap, DotState, Dependency, BrewfileConfig } from "./src/types";
+import { browseForPath, UserCancelledError } from "./src/wizard";
 import * as p from '@clack/prompts';
 
 const VERSION = "0.1.0";
@@ -1056,25 +1057,40 @@ async function markAsReviewed(
   await writeReviewedPaths(config, reviewed);
 }
 
-async function review(config: Config, pathArg: string | undefined) {
-  if (!pathArg) {
-    p.log.error('Usage: dot review <path>');
-    console.log('');
-    console.log('Mark a path as reviewed so doctor won\'t recommend it for 90 days.');
-    console.log('');
-    console.log('Examples:');
-    console.log('  dot review ~/.config/gh');
-    console.log('  dot review ~/.gitignore_global');
-    process.exit(1);
+type DoctorIgnoreOptions = {
+  path?: string;
+  cwd?: boolean;
+};
+
+async function doctorIgnore(config: Config, options: DoctorIgnoreOptions) {
+  p.intro('dot doctor ignore');
+
+  let targetPath: string;
+
+  if (options.path) {
+    // Path provided directly
+    targetPath = normalizePath(config.home, options.path);
+  } else {
+    // Browse for path
+    const startDir = options.cwd ? process.cwd() : config.home;
+    p.log.info(`Select a file or directory to ignore (starting from ${startDir})`);
+
+    try {
+      targetPath = await browseForPath(startDir);
+    } catch (error) {
+      if (error instanceof UserCancelledError) {
+        p.log.warn('Cancelled');
+        return;
+      }
+      throw error;
+    }
   }
 
-  const normalizedPath = normalizePath(config.home, pathArg);
   const today = new Date().toISOString().split("T")[0]!;
-  await markAsReviewed(config, normalizedPath, today);
+  await markAsReviewed(config, targetPath, today);
 
-  p.log.success(`Marked as reviewed: ${normalizedPath}`);
-  p.log.info(`Excluded from doctor until ${getExpiryDate(today)}`,
-  );
+  p.log.success(`Ignored: ${targetPath}`);
+  p.log.info(`Excluded from doctor until ${getExpiryDate(today)}`);
 }
 
 function getExpiryDate(reviewDate: string): string {
@@ -1271,9 +1287,8 @@ function help() {
   console.log(
     "  doctor          Analyze dotfiles with Claude and suggest fixes",
   );
-  console.log(
-    "  review <path>   Mark a path as reviewed (excludes from doctor for 90 days)",
-  );
+  console.log("  doctor ignore [path]  Exclude path from doctor for 90 days");
+  console.log("    --cwd         Start browser from current directory");
   console.log("  track <path>    Add file to dotfiles repo and create symlink");
   console.log("    --as <path>   Specify destination path in repo (e.g., --as zsh/aliases)");
   console.log("    --force, -f   Skip confirmations");
@@ -1370,14 +1385,30 @@ async function main() {
     case "sync":
       await sync(config, dotConfig);
       break;
-    case "doctor":
-      await doctor(config, dotConfig);
-      break;
-    case "review": {
-      // Find the path argument (after "review")
-      const reviewIdx = args.indexOf("review");
-      const pathArg = reviewIdx >= 0 ? args[reviewIdx + 1] : undefined;
-      await review(config, pathArg);
+    case "doctor": {
+      // Check for subcommand
+      const doctorIdx = args.indexOf("doctor");
+      const subcommand = doctorIdx >= 0 ? args[doctorIdx + 1] : undefined;
+
+      if (subcommand === "ignore") {
+        // Parse ignore options
+        const ignoreOptions: DoctorIgnoreOptions = {};
+        const pathArg = args[doctorIdx + 2];
+
+        // Check for --cwd flag
+        if (args.includes("--cwd")) {
+          ignoreOptions.cwd = true;
+        }
+
+        // Path is the argument after "ignore" if it doesn't start with --
+        if (pathArg && !pathArg.startsWith("--")) {
+          ignoreOptions.path = pathArg;
+        }
+
+        await doctorIgnore(config, ignoreOptions);
+      } else {
+        await doctor(config, dotConfig);
+      }
       break;
     }
     case "track": {

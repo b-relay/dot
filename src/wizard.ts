@@ -289,6 +289,94 @@ export async function getAllFilesRecursively(
 }
 
 /**
+ * Interactive file/directory browser for selecting a path.
+ * Can select both files and directories.
+ * Returns the selected absolute path.
+ */
+export async function browseForPath(startPath: string): Promise<string> {
+  let currentPath = startPath;
+
+  while (true) {
+    let entries: Array<{ name: string; isDir: boolean }> = [];
+    try {
+      const dirEntries = await readdir(currentPath, { withFileTypes: true });
+      entries = dirEntries
+        .map(e => ({ name: e.name, isDir: e.isDirectory() }))
+        .sort((a, b) => {
+          // Directories first, then files, both alphabetically
+          if (a.isDir && !b.isDir) return -1;
+          if (!a.isDir && b.isDir) return 1;
+          // Hidden items after visible ones
+          const aHidden = a.name.startsWith('.');
+          const bHidden = b.name.startsWith('.');
+          if (aHidden && !bHidden) return 1;
+          if (!aHidden && bHidden) return -1;
+          return a.name.localeCompare(b.name);
+        });
+    } catch {
+      entries = [];
+    }
+
+    const parentPath = dirname(currentPath);
+    const canGoUp = parentPath !== currentPath;
+
+    // Build options
+    const options: Array<{ value: string; label: string; hint?: string }> = [
+      { value: '__select__', label: '✓ Select this directory', hint: formatPath(currentPath) },
+    ];
+
+    if (canGoUp) {
+      options.push({ value: '__up__', label: '..', hint: 'go up' });
+    }
+
+    // Add entries (directories and files)
+    for (const entry of entries) {
+      const isHidden = entry.name.startsWith('.');
+      if (entry.isDir) {
+        options.push({
+          value: `dir:${entry.name}`,
+          label: entry.name + '/',
+          hint: isHidden ? 'hidden' : undefined,
+        });
+      } else {
+        options.push({
+          value: `file:${entry.name}`,
+          label: entry.name,
+          hint: isHidden ? 'hidden' : 'select this file',
+        });
+      }
+    }
+
+    const result = await p.select({
+      message: `Browse: ${formatPath(currentPath)}`,
+      options,
+    });
+
+    checkCancel(result);
+
+    if (result === '__select__') {
+      return currentPath;
+    }
+
+    if (result === '__up__') {
+      currentPath = parentPath;
+      continue;
+    }
+
+    const selected = result as string;
+    if (selected.startsWith('file:')) {
+      // Return the selected file
+      return resolve(currentPath, selected.slice(5));
+    }
+
+    if (selected.startsWith('dir:')) {
+      // Navigate into directory
+      currentPath = resolve(currentPath, selected.slice(4));
+    }
+  }
+}
+
+/**
  * Custom error class for user cancellation (Ctrl+C).
  * This allows callers to distinguish between errors and user abort.
  */
