@@ -423,6 +423,7 @@ export async function printTreeRecursive(
  * Interactive file/directory browser for selecting a path.
  * Can select both files and directories.
  * Returns the selected absolute path.
+ * Filtered directories (system/cache) appear greyed out with confirmation required.
  */
 export async function browseForPath(startPath: string): Promise<string> {
   let currentPath = startPath;
@@ -442,6 +443,11 @@ export async function browseForPath(startPath: string): Promise<string> {
           const bHidden = b.name.startsWith('.');
           if (aHidden && !bHidden) return 1;
           if (!aHidden && bHidden) return -1;
+          // Filtered directories last among dirs
+          const aFiltered = FILTERED_DIRS.has(a.name);
+          const bFiltered = FILTERED_DIRS.has(b.name);
+          if (aFiltered && !bFiltered) return 1;
+          if (!aFiltered && bFiltered) return -1;
           return a.name.localeCompare(b.name);
         });
     } catch {
@@ -463,12 +469,23 @@ export async function browseForPath(startPath: string): Promise<string> {
     // Add entries (directories and files)
     for (const entry of entries) {
       const isHidden = entry.name.startsWith('.');
+      const isFiltered = entry.isDir && FILTERED_DIRS.has(entry.name);
+
       if (entry.isDir) {
-        options.push({
-          value: `dir:${entry.name}`,
-          label: entry.name + '/',
-          hint: isHidden ? 'hidden' : undefined,
-        });
+        if (isFiltered) {
+          // Show filtered directories as dimmed with explanatory hint
+          options.push({
+            value: `dir:${entry.name}`,
+            label: pc.dim(`${entry.name}/`),
+            hint: pc.dim('skipped (system/cache)'),
+          });
+        } else {
+          options.push({
+            value: `dir:${entry.name}`,
+            label: entry.name + '/',
+            hint: isHidden ? 'hidden' : undefined,
+          });
+        }
       } else {
         options.push({
           value: `file:${entry.name}`,
@@ -501,8 +518,21 @@ export async function browseForPath(startPath: string): Promise<string> {
     }
 
     if (selected.startsWith('dir:')) {
+      const dirName = selected.slice(4);
+
+      // Check if this is a filtered directory - require confirmation
+      if (FILTERED_DIRS.has(dirName)) {
+        const override = await p.confirm({
+          message: `${dirName} is typically skipped (cache/system dir). Include anyway?`,
+          initialValue: false,
+        });
+        if (p.isCancel(override) || !override) {
+          continue; // Stay in current directory
+        }
+      }
+
       // Navigate into directory
-      currentPath = resolve(currentPath, selected.slice(4));
+      currentPath = resolve(currentPath, dirName);
     }
   }
 }
@@ -568,6 +598,7 @@ function formatPath(path: string): string {
  * Allows navigation through directories with options to select or create.
  * Returns the selected absolute path.
  * Throws UserCancelledError if user presses Ctrl+C.
+ * Filtered directories (system/cache) appear greyed out with confirmation required.
  */
 async function browseDirectory(startPath: string): Promise<string> {
   let currentPath = startPath;
@@ -577,6 +608,15 @@ async function browseDirectory(startPath: string): Promise<string> {
     const parentPath = dirname(currentPath);
     const canGoUp = parentPath !== currentPath; // Not at root
 
+    // Sort subdirs: non-filtered first, then filtered, both alphabetically
+    const sortedSubdirs = [...subdirs].sort((a, b) => {
+      const aFiltered = FILTERED_DIRS.has(a);
+      const bFiltered = FILTERED_DIRS.has(b);
+      if (aFiltered && !bFiltered) return 1;
+      if (!aFiltered && bFiltered) return -1;
+      return a.localeCompare(b);
+    });
+
     // Build options - navigation first, then selection
     const options: Array<{ value: string; label: string; hint?: string }> = [];
 
@@ -584,14 +624,24 @@ async function browseDirectory(startPath: string): Promise<string> {
       options.push({ value: '__up__', label: '..', hint: 'go up' });
     }
 
-    // Add subdirectories
-    for (const dir of subdirs) {
+    // Add subdirectories with filtering visual indication
+    for (const dir of sortedSubdirs) {
       const isHidden = dir.startsWith('.');
-      options.push({
-        value: dir,
-        label: dir + '/',
-        hint: isHidden ? 'hidden' : undefined,
-      });
+      const isFiltered = FILTERED_DIRS.has(dir);
+
+      if (isFiltered) {
+        options.push({
+          value: dir,
+          label: pc.dim(`${dir}/`),
+          hint: pc.dim('skipped (system/cache)'),
+        });
+      } else {
+        options.push({
+          value: dir,
+          label: dir + '/',
+          hint: isHidden ? 'hidden' : undefined,
+        });
+      }
     }
 
     // Selection options at the bottom
@@ -600,7 +650,7 @@ async function browseDirectory(startPath: string): Promise<string> {
     options.push({ value: '__create__', label: '+ Create new folder here' });
 
     const result = await p.select({
-      message: `📁 ${currentPath}`,
+      message: `Browse: ${currentPath}`,
       options,
     });
 
@@ -611,7 +661,7 @@ async function browseDirectory(startPath: string): Promise<string> {
     }
 
     if (result === '__create__') {
-      const folderName = await p.text({
+      const newFolderName = await p.text({
         message: 'New folder name:',
         placeholder: 'my-dotfiles',
         validate: (value) => {
@@ -621,9 +671,9 @@ async function browseDirectory(startPath: string): Promise<string> {
         },
       });
 
-      checkCancel(folderName);
+      checkCancel(newFolderName);
 
-      const newPath = resolve(currentPath, folderName as string);
+      const newPath = resolve(currentPath, newFolderName as string);
 
       // Create the directory
       try {
@@ -641,8 +691,20 @@ async function browseDirectory(startPath: string): Promise<string> {
       continue;
     }
 
+    // Check if this is a filtered directory - require confirmation
+    const selectedDir = result as string;
+    if (FILTERED_DIRS.has(selectedDir)) {
+      const override = await p.confirm({
+        message: `${selectedDir} is typically skipped (cache/system dir). Include anyway?`,
+        initialValue: false,
+      });
+      if (p.isCancel(override) || !override) {
+        continue; // Stay in current directory
+      }
+    }
+
     // Navigate into selected directory
-    currentPath = resolve(currentPath, result as string);
+    currentPath = resolve(currentPath, selectedDir);
   }
 }
 
