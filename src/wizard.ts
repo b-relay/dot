@@ -27,46 +27,130 @@ export type DetectedDotfile = {
 };
 
 /**
- * Common dotfiles to scan for during init.
- * Maps file paths relative to home to suggested repo locations.
+ * Suggested repo paths for known dotfiles.
+ * Used to provide better defaults when user selects a file.
  */
-const COMMON_DOTFILES: Array<{
-  path: string;             // Path relative to home (e.g., ".gitconfig")
-  suggested: string;        // Suggested location in repo
-  warning?: string;         // Warning to show user
-}> = [
+const SUGGESTED_PATHS: Record<string, string> = {
   // Shell
-  { path: '.zshrc', suggested: 'zsh/zshrc' },
-  { path: '.zprofile', suggested: 'zsh/zprofile' },
-  { path: '.zshenv', suggested: 'zsh/zshenv' },
-  { path: '.bashrc', suggested: 'bash/bashrc' },
-  { path: '.bash_profile', suggested: 'bash/bash_profile' },
-
+  '.zshrc': 'zsh/zshrc',
+  '.zprofile': 'zsh/zprofile',
+  '.zshenv': 'zsh/zshenv',
+  '.bashrc': 'bash/bashrc',
+  '.bash_profile': 'bash/bash_profile',
   // Git
-  { path: '.gitconfig', suggested: 'git/.gitconfig' },
-  { path: '.config/git/config', suggested: 'git/config' },
-
+  '.gitconfig': 'git/.gitconfig',
+  '.config/git/config': 'git/config',
+  '.config/git': 'git',
   // Editors
-  { path: '.vimrc', suggested: 'vim/vimrc' },
-  { path: '.config/nvim', suggested: 'nvim' },
-
+  '.vimrc': 'vim/vimrc',
+  '.config/nvim': 'nvim',
   // Terminal
-  { path: '.tmux.conf', suggested: 'tmux/tmux.conf' },
-  { path: '.config/tmux/tmux.conf', suggested: 'tmux/tmux.conf' },
-  { path: '.config/starship.toml', suggested: 'starship/starship.toml' },
-  { path: '.config/starship/starship.toml', suggested: 'starship/starship.toml' },
-  { path: '.config/alacritty', suggested: 'alacritty' },
+  '.tmux.conf': 'tmux/tmux.conf',
+  '.config/tmux': 'tmux',
+  '.config/starship.toml': 'starship/starship.toml',
+  '.config/alacritty': 'alacritty',
+  '.config/kitty': 'kitty',
+  '.config/wezterm': 'wezterm',
+  // SSH
+  '.ssh/config': 'ssh/config',
+  // Other
+  '.npmrc': 'npm/npmrc',
+};
 
-  // SSH (with warning)
-  {
-    path: '.ssh/config',
-    suggested: 'ssh/config',
-    warning: 'SSH config may contain sensitive paths. Review before committing.',
-  },
+/**
+ * Paths that should show a warning about sensitive content.
+ */
+const SENSITIVE_PATHS: Record<string, string> = {
+  '.ssh': 'SSH directory may contain private keys. Only track config files.',
+  '.ssh/config': 'SSH config may contain sensitive paths. Review before committing.',
+  '.gnupg': 'GPG directory contains private keys. Do not track.',
+  '.aws': 'AWS directory may contain credentials. Do not track credentials.',
+  '.netrc': 'Contains plaintext passwords. Do not track.',
+};
 
-  // Other common
-  { path: '.npmrc', suggested: 'npm/npmrc' },
-];
+/**
+ * Dotfiles/folders in $HOME that should never be offered for tracking.
+ * These are system files, caches, or known large directories.
+ */
+const SKIP_HOME_DOTFILES = new Set([
+  // System files
+  '.DS_Store',
+  '.localized',
+  '.CFUserTextEncoding',
+  '.Trash',
+  // Caches and temp
+  '.cache',
+  '.local',
+  '.tmp',
+  '.temp',
+  // Package managers (large, auto-generated)
+  '.npm',
+  '.yarn',
+  '.pnpm',
+  '.bun',
+  '.cargo',
+  '.rustup',
+  '.gradle',
+  '.m2',
+  '.ivy2',
+  '.go',
+  // Version managers
+  '.nvm',
+  '.fnm',
+  '.pyenv',
+  '.rbenv',
+  '.virtualenvs',
+  '.conda',
+  // IDE state (large, machine-specific)
+  '.vscode-server',
+  '.cursor-server',
+  '.eclipse',
+  '.idea',
+  // Cloud storage
+  '.dropbox',
+  // Containers
+  '.docker',
+  '.vagrant',
+  '.minikube',
+  // History files (machine-specific, can be large)
+  '.zsh_history',
+  '.bash_history',
+  '.node_repl_history',
+  '.python_history',
+  '.lesshst',
+  '.wget-hsts',
+  // Session files
+  '.zsh_sessions',
+  '.bash_sessions',
+  // Secrets (should never track)
+  '.gnupg',
+  '.password-store',
+  '.netrc',
+]);
+
+/**
+ * Entries in ~/.config that should never be offered for tracking.
+ */
+const SKIP_CONFIG_ENTRIES = new Set([
+  // Large app data
+  'google-chrome',
+  'chromium',
+  'BraveSoftware',
+  'firefox',
+  'Code',          // VS Code (large)
+  'Cursor',        // Cursor (large)
+  // Caches
+  'cache',
+  'Cache',
+  // Session/state
+  'session',
+  'configstore',
+  'pulse',         // PulseAudio
+  // Package managers
+  'yarn',
+  'npm',
+  'pnpm',
+]);
 
 /**
  * Expand ~ to home directory and resolve to absolute path.
@@ -429,33 +513,75 @@ async function scanDirectoryForSymlinks(
 }
 
 /**
- * Scan home directory for common dotfiles.
+ * Get suggested repo path for a dotfile.
+ * Uses SUGGESTED_PATHS for known files, otherwise generates from name.
+ */
+function getSuggestedPath(relativePath: string): string {
+  // Check for exact match in suggestions
+  if (SUGGESTED_PATHS[relativePath]) {
+    return SUGGESTED_PATHS[relativePath];
+  }
+
+  // For .config/* entries, use the name without .config prefix
+  if (relativePath.startsWith('.config/')) {
+    return relativePath.slice('.config/'.length);
+  }
+
+  // For dotfiles, remove leading dot and use as folder/name
+  // e.g., .vimrc -> vim/vimrc, .tmux.conf -> tmux/tmux.conf
+  if (relativePath.startsWith('.')) {
+    const name = relativePath.slice(1);
+    const dotIndex = name.indexOf('.');
+    if (dotIndex > 0) {
+      // Has extension: .tmux.conf -> tmux/tmux.conf
+      const prefix = name.slice(0, dotIndex);
+      return `${prefix}/${name}`;
+    }
+    // No extension: .vimrc -> vim/vimrc
+    return `${name.replace('rc', '')}/${name}`;
+  }
+
+  return relativePath;
+}
+
+/**
+ * Get warning for a path if it contains sensitive content.
+ */
+function getWarning(relativePath: string): string | undefined {
+  // Check exact matches
+  if (SENSITIVE_PATHS[relativePath]) {
+    return SENSITIVE_PATHS[relativePath];
+  }
+  // Check prefix matches (e.g., .ssh/anything)
+  for (const [path, warning] of Object.entries(SENSITIVE_PATHS)) {
+    if (relativePath.startsWith(path + '/')) {
+      return warning;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Scan home directory for ALL dotfiles and ~/.config entries.
  * If dotfilesPath is provided, determines status of each file relative to the repo.
  * Returns array of detected dotfiles with metadata and status.
+ *
+ * @param extraSkipPatterns Additional patterns to skip (from config)
  */
 export async function scanCommonDotfiles(
   home: string,
-  dotfilesPath?: string
+  dotfilesPath?: string,
+  extraSkipPatterns: string[] = []
 ): Promise<DetectedDotfile[]> {
   const found: DetectedDotfile[] = [];
+  const skipHome = new Set([...SKIP_HOME_DOTFILES, ...extraSkipPatterns]);
+  const skipConfig = new Set([...SKIP_CONFIG_ENTRIES, ...extraSkipPatterns]);
 
   // First pass: collect all symlinks pointing to dotfiles repo
-  // This lets us know which repo files are already linked from ANY location
-  // Map: symlink path -> discovered symlink info (source path + whether target exists)
   const allDiscoveredSymlinks = new Map<string, DiscoveredSymlink>();
 
   if (dotfilesPath) {
-    // Scan COMMON_DOTFILES paths first
-    for (const entry of COMMON_DOTFILES) {
-      const fullPath = resolve(home, entry.path);
-      const result = await checkSymlinkToRepo(fullPath, dotfilesPath);
-      if (result) {
-        allDiscoveredSymlinks.set(fullPath, result);
-      }
-    }
-
-    // Deep scan home directory (depth 3) - catches dotfiles in nested locations
-    // Skips large non-config directories like Downloads, Documents, node_modules, etc.
+    // Deep scan home directory for existing symlinks
     const homeSymlinks = await scanDirectoryForSymlinks(
       home,
       dotfilesPath,
@@ -467,15 +593,14 @@ export async function scanCommonDotfiles(
       allDiscoveredSymlinks.set(symlinkPath, info);
     }
 
-    // Deep scan ~/.config (depth 4) - most config files live here
+    // Deep scan ~/.config for existing symlinks
     const configPath = `${home}/.config`;
     const configSymlinks = await scanDirectoryForSymlinks(configPath, dotfilesPath, 4);
     for (const [symlinkPath, info] of configSymlinks) {
       allDiscoveredSymlinks.set(symlinkPath, info);
     }
 
-    // On macOS, also scan ~/Library/Application Support (depth 4)
-    // This catches app configs like VS Code, Cursor, etc.
+    // On macOS, also scan ~/Library/Application Support
     if (process.platform === 'darwin') {
       const appSupportPath = `${home}/Library/Application Support`;
       const appSupportSymlinks = await scanDirectoryForSymlinks(
@@ -491,114 +616,130 @@ export async function scanCommonDotfiles(
     }
   }
 
-  // Build set of all source paths that are already linked (for filtering later)
-  // Only count working symlinks, not broken ones
+  // Build set of paths already linked (to avoid duplicates)
   const alreadyLinkedSources = new Set(
     Array.from(allDiscoveredSymlinks.values())
       .filter(info => info.targetExists)
       .map(info => info.sourcePath)
   );
 
-  // Second pass: categorize each entry
-  for (const entry of COMMON_DOTFILES) {
-    const fullPath = resolve(home, entry.path);
-    const homeFileExists = await pathExists(fullPath);
-
-    // If no dotfiles path provided, just check if file exists
-    if (!dotfilesPath) {
-      if (homeFileExists) {
-        const isDir = await isDirectory(fullPath);
-        found.push({
-          path: fullPath,
-          name: entry.path,
-          suggested: entry.suggested,
-          isDirectory: isDir,
-          warning: entry.warning,
-          status: 'available',
-        });
-      }
-      continue;
+  // Helper to add a detected file
+  const addDetected = async (
+    fullPath: string,
+    relativePath: string,
+    symlinkInfo?: DiscoveredSymlink
+  ) => {
+    // If it's a symlink to our repo
+    if (symlinkInfo) {
+      const actualRelativePath = getRelativeRepoPath(symlinkInfo.sourcePath, dotfilesPath!);
+      const isDir = symlinkInfo.targetExists ? await isDirectory(symlinkInfo.sourcePath) : false;
+      found.push({
+        path: fullPath,
+        name: relativePath,
+        suggested: actualRelativePath,
+        sourcePath: symlinkInfo.sourcePath,
+        isDirectory: isDir,
+        warning: getWarning(relativePath),
+        status: symlinkInfo.targetExists ? 'already-linked' : 'broken-link',
+      });
+      return;
     }
 
-    // Check if it's already a symlink to our dotfiles
-    const symlinkInfo = allDiscoveredSymlinks.get(fullPath);
+    // Check if file exists in home
+    const homeFileExists = await pathExists(fullPath);
+    if (!homeFileExists) return;
 
-    if (symlinkInfo) {
-      // It's a symlink pointing into our repo - get the real relative path
-      const actualRelativePath = getRelativeRepoPath(symlinkInfo.sourcePath, dotfilesPath);
-      // For broken symlinks, isDirectory is false since target doesn't exist
-      const isDir = symlinkInfo.targetExists ? await isDirectory(symlinkInfo.sourcePath) : false;
+    const isDir = await isDirectory(fullPath);
+    const suggested = getSuggestedPath(relativePath);
+
+    // If we have a dotfiles repo, check status
+    if (dotfilesPath) {
+      const suggestedSourcePath = resolve(dotfilesPath, suggested);
+      const sourceExists = await pathExists(suggestedSourcePath);
+
+      // Skip if already linked from different location
+      if (sourceExists && alreadyLinkedSources.has(suggestedSourcePath)) {
+        return;
+      }
+
+      let status: DotfileStatus;
+      if (sourceExists) {
+        status = 'conflict';
+      } else {
+        status = 'available';
+      }
 
       found.push({
         path: fullPath,
-        name: entry.path,
-        suggested: actualRelativePath, // Use actual path, not assumed
-        sourcePath: symlinkInfo.sourcePath,
+        name: relativePath,
+        suggested,
+        sourcePath: sourceExists ? suggestedSourcePath : undefined,
         isDirectory: isDir,
-        warning: entry.warning,
-        status: symlinkInfo.targetExists ? 'already-linked' : 'broken-link',
+        warning: getWarning(relativePath),
+        status,
       });
-      continue;
-    }
-
-    // Check if source exists in dotfiles repo at the suggested location
-    const suggestedSourcePath = resolve(dotfilesPath, entry.suggested);
-    const sourceExists = await pathExists(suggestedSourcePath);
-
-    // If this repo file is already linked from a DIFFERENT location, skip it
-    if (sourceExists && alreadyLinkedSources.has(suggestedSourcePath)) {
-      continue;
-    }
-
-    // Determine status
-    let status: DotfileStatus;
-
-    if (homeFileExists) {
-      if (sourceExists) {
-        // Both exist but not linked - conflict
-        status = 'conflict';
-      } else {
-        // Home file exists, source doesn't - available to migrate
-        status = 'available';
-      }
-    } else if (sourceExists) {
-      // Source exists in repo but no home file - in repo, can be linked
-      status = 'in-repo';
     } else {
-      // Neither exists, skip
-      continue;
+      found.push({
+        path: fullPath,
+        name: relativePath,
+        suggested,
+        isDirectory: isDir,
+        warning: getWarning(relativePath),
+        status: 'available',
+      });
     }
+  };
 
-    const isDir = homeFileExists
-      ? await isDirectory(fullPath)
-      : await isDirectory(suggestedSourcePath);
+  // Second pass: scan home directory for dotfiles (starting with .)
+  try {
+    const homeEntries = await readdir(home, { withFileTypes: true });
+    for (const entry of homeEntries) {
+      // Only look at dotfiles
+      if (!entry.name.startsWith('.')) continue;
 
-    found.push({
-      path: fullPath,
-      name: entry.path,
-      suggested: entry.suggested,
-      sourcePath: sourceExists ? suggestedSourcePath : undefined,
-      isDirectory: isDir,
-      warning: entry.warning,
-      status,
-    });
+      // Skip system/cache entries
+      if (skipHome.has(entry.name)) continue;
+
+      // Skip .config (we'll scan it separately)
+      if (entry.name === '.config') continue;
+
+      const fullPath = resolve(home, entry.name);
+      const symlinkInfo = allDiscoveredSymlinks.get(fullPath);
+
+      await addDetected(fullPath, entry.name, symlinkInfo);
+    }
+  } catch {
+    // Ignore permission errors
   }
 
-  // Third pass: add discovered symlinks that weren't in COMMON_DOTFILES
-  // These are symlinks found during deep scanning that point to our dotfiles repo
+  // Third pass: scan ~/.config for all entries
+  const configPath = `${home}/.config`;
+  try {
+    const configEntries = await readdir(configPath, { withFileTypes: true });
+    for (const entry of configEntries) {
+      // Skip system/cache entries
+      if (skipConfig.has(entry.name)) continue;
+
+      const fullPath = resolve(configPath, entry.name);
+      const relativePath = `.config/${entry.name}`;
+      const symlinkInfo = allDiscoveredSymlinks.get(fullPath);
+
+      await addDetected(fullPath, relativePath, symlinkInfo);
+    }
+  } catch {
+    // Ignore if .config doesn't exist or permission error
+  }
+
+  // Fourth pass: add discovered symlinks not already added
+  // (symlinks in nested locations pointing to our repo)
   if (dotfilesPath) {
     const alreadyAddedPaths = new Set(found.map(f => f.path));
 
     for (const [symlinkPath, info] of allDiscoveredSymlinks) {
-      // Skip if already added from COMMON_DOTFILES processing
-      if (alreadyAddedPaths.has(symlinkPath)) {
-        continue;
-      }
+      if (alreadyAddedPaths.has(symlinkPath)) continue;
 
-      // Get relative paths for display
       const nameRelativeToHome = relative(home, symlinkPath);
       const suggestedRelativeToRepo = getRelativeRepoPath(info.sourcePath, dotfilesPath);
-      // For broken symlinks, isDirectory is false since target doesn't exist
       const isDir = info.targetExists ? await isDirectory(info.sourcePath) : false;
 
       found.push({
@@ -607,6 +748,7 @@ export async function scanCommonDotfiles(
         suggested: suggestedRelativeToRepo,
         sourcePath: info.sourcePath,
         isDirectory: isDir,
+        warning: getWarning(nameRelativeToHome),
         status: info.targetExists ? 'already-linked' : 'broken-link',
       });
     }

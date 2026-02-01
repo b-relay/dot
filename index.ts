@@ -1263,6 +1263,7 @@ function help() {
   console.log("  init            First-time setup wizard");
   console.log("    --from <url>  Clone from GitHub repo");
   console.log("    --force, -f   Overwrite existing config");
+  console.log("    --ignore <p>  Skip pattern during scan (repeatable)");
   console.log("  install         Create symlinks for all configs (blocks if deps missing)");
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");

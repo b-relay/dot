@@ -41,6 +41,8 @@ export const DotConfigSchema = z.object({
   dependencies: z.array(DependencySchema).optional(),
   /** Brewfile configuration for sync command */
   brewfile: BrewfileConfigSchema.optional(),
+  /** Extra patterns to ignore during init scan (added to built-in skip list) */
+  ignorePatterns: z.array(z.string()).optional(),
 });
 export type DotConfig = z.infer<typeof DotConfigSchema>;
 
