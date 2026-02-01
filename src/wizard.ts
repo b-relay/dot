@@ -986,8 +986,8 @@ export async function configureUnknownFiles(
   const result = await p.select({
     message: 'Would you like to configure symlinks for these files?',
     options: [
-      { value: 'skip', label: 'Skip for now', hint: 'use "dot track" later to add them' },
-      { value: 'configure', label: 'Configure now', hint: 'specify where each should be linked' },
+      { value: 'skip', label: 'Skip all', hint: 'use "dot track" later' },
+      { value: 'configure', label: 'Configure some', hint: 'choose which files to link' },
     ],
   });
 
@@ -997,21 +997,39 @@ export async function configureUnknownFiles(
     return [];
   }
 
-  // Let user configure each file
+  // Let user select which files to configure
+  const selectableFiles = unknownFiles.map(file => ({
+    value: file,
+    label: file.relativePath,
+    hint: inferLinkTarget(file.relativePath),
+  }));
+
+  const selectedResult = await p.multiselect({
+    message: 'Select files to configure (space to toggle, enter to confirm):',
+    options: selectableFiles,
+    required: false,
+  });
+
+  checkCancel(selectedResult);
+
+  const selectedFiles = selectedResult as Array<{ repoPath: string; relativePath: string }>;
+
+  if (selectedFiles.length === 0) {
+    p.log.info('No files selected');
+    return [];
+  }
+
+  // Configure only selected files
   const configured: DetectedDotfile[] = [];
   const home = process.env.HOME ?? '';
 
-  for (const file of unknownFiles) {
-    // Suggest a path based on the file location
-    // e.g., "myapp/config.toml" -> "~/.config/myapp/config.toml"
+  for (const file of selectedFiles) {
     const suggestedTarget = inferLinkTarget(file.relativePath);
 
-    p.log.step(`${file.relativePath}`);
-
     const pathResult = await p.text({
-      message: `Link to (Enter to skip, or specify path):`,
+      message: `${file.relativePath} - link to:`,
       placeholder: suggestedTarget,
-      defaultValue: '',
+      defaultValue: suggestedTarget,
     });
 
     checkCancel(pathResult);
@@ -1019,7 +1037,6 @@ export async function configureUnknownFiles(
     const pathValue = (pathResult as string)?.trim();
 
     if (!pathValue) {
-      p.log.warn(`  Skipped - use "dot track" later`);
       continue;
     }
 
