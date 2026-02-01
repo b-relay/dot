@@ -54,6 +54,7 @@ const COMMON_DOTFILES: Array<{
   { path: '.tmux.conf', suggested: 'tmux/tmux.conf' },
   { path: '.config/tmux/tmux.conf', suggested: 'tmux/tmux.conf' },
   { path: '.config/starship.toml', suggested: 'starship/starship.toml' },
+  { path: '.config/starship/starship.toml', suggested: 'starship/starship.toml' },
   { path: '.config/alacritty', suggested: 'alacritty' },
 
   // SSH (with warning)

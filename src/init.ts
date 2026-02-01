@@ -416,6 +416,18 @@ async function initImpl(options: InitOptions): Promise<void> {
 
       // Then create symlinks
       await installLinks(config!.links);
+
+      // Commit migrated files if autoCommit enabled
+      if (config!.autoCommit && selectedDotfiles.length > 0) {
+        const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
+        if (statusOutput.trim()) {
+          if (await confirm("Commit migrated files?")) {
+            await $`git -C ${dotfilesPath} add -A`.quiet();
+            await $`git -C ${dotfilesPath} commit -m "Add migrated dotfiles via dot init"`.quiet();
+            p.log.success("Committed migrated files");
+          }
+        }
+      }
     }
   } else {
     console.log("\nNo symlinks to create (empty configuration).");
