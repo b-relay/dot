@@ -1284,20 +1284,28 @@ export type PreviewResult = {
 
 /**
  * Preview symlinks that will be created.
- * Shows source -> target with status indicators.
+ * Shows source -> target with status indicators, grouped by action type.
  * Returns detailed preview result including status of each symlink.
  */
 export async function previewSymlinks(
   links: LinkMap,
-  dotfilesPath: string
+  dotfilesPath: string,
+  options?: { colored?: boolean }
 ): Promise<PreviewResult> {
-  console.log('\nSymlink preview:');
-  console.log('================\n');
+  const useColor = options?.colored ?? true;
 
-  let hasConflicts = false;
-  let hasWrongTargets = false;
+  // Group items by status
+  const groups = {
+    new: [] as Array<{ source: string; target: string }>,
+    willCreate: [] as Array<{ source: string; target: string }>,
+    alreadyLinked: [] as Array<{ source: string; target: string }>,
+    wrongTarget: [] as Array<{ source: string; target: string; actual: string }>,
+    conflict: [] as Array<{ source: string; target: string }>,
+  };
+
   const items: PreviewResult['items'] = [];
 
+  // First pass: categorize all links
   for (const [source, target] of Object.entries(links)) {
     // Check if source exists in dotfiles
     const sourceExists = await pathExists(source);
@@ -1306,15 +1314,14 @@ export async function previewSymlinks(
     const targetExists = await pathExists(target);
 
     let status: SymlinkPreviewStatus;
-    let statusDisplay: string;
     let actualTarget: string | undefined;
 
     if (!sourceExists) {
       status = 'will-create';
-      statusDisplay = '[will create]';
+      groups.willCreate.push({ source, target });
     } else if (!targetExists) {
       status = 'new';
-      statusDisplay = '[new]';
+      groups.new.push({ source, target });
     } else {
       // Target exists - check if it's a symlink and where it points
       try {
@@ -1327,53 +1334,104 @@ export async function previewSymlinks(
           // Compare resolved target with expected source
           if (resolvedTarget === source) {
             status = 'already-linked';
-            statusDisplay = '[already linked]';
+            groups.alreadyLinked.push({ source, target });
           } else {
             status = 'wrong-target';
-            statusDisplay = '[wrong target]';
             actualTarget = resolvedTarget;
-            hasWrongTargets = true;
+            groups.wrongTarget.push({ source, target, actual: resolvedTarget });
           }
         } else {
           status = 'conflict';
-          statusDisplay = '[conflict]';
-          hasConflicts = true;
+          groups.conflict.push({ source, target });
         }
       } catch {
         status = 'conflict';
-        statusDisplay = '[conflict]';
-        hasConflicts = true;
+        groups.conflict.push({ source, target });
       }
     }
 
     items.push({ source, target, status, actualTarget });
-
-    // Display relative to dotfiles for cleaner output
-    const displaySource = source.startsWith(dotfilesPath)
-      ? source.slice(dotfilesPath.length + 1)
-      : source;
-
-    console.log(`  ${statusDisplay.padEnd(16)} ${displaySource}`);
-    console.log(`                   -> ${target}`);
-
-    // Show where wrong target points for debugging
-    if (actualTarget) {
-      const displayActual = actualTarget.startsWith(dotfilesPath)
-        ? actualTarget.slice(dotfilesPath.length + 1)
-        : actualTarget;
-      console.log(`                   (currently -> ${displayActual})`);
-    }
   }
 
-  console.log('');
+  // Helper to get display source (relative to dotfiles)
+  const getDisplaySource = (source: string) =>
+    source.startsWith(dotfilesPath) ? source.slice(dotfilesPath.length + 1) : source;
+
+  // Display grouped output
+  console.log('\nSymlink preview:');
+  console.log('================\n');
+
+  // New symlinks (green)
+  if (groups.new.length > 0 || groups.willCreate.length > 0) {
+    console.log(useColor ? pc.green('New symlinks:') : 'New symlinks:');
+    for (const item of [...groups.new, ...groups.willCreate]) {
+      const displaySource = getDisplaySource(item.source);
+      console.log(useColor
+        ? `  ${pc.green('+')} ${displaySource} -> ${item.target}`
+        : `  [new] ${displaySource} -> ${item.target}`
+      );
+    }
+    console.log('');
+  }
+
+  // Already linked (dim)
+  if (groups.alreadyLinked.length > 0) {
+    console.log(useColor ? pc.dim('Already linked:') : 'Already linked:');
+    for (const item of groups.alreadyLinked) {
+      const displaySource = getDisplaySource(item.source);
+      console.log(useColor
+        ? `  ${pc.dim('=')} ${pc.dim(displaySource)}`
+        : `  [ok] ${displaySource}`
+      );
+    }
+    console.log('');
+  }
+
+  // Wrong target (yellow)
+  if (groups.wrongTarget.length > 0) {
+    console.log(useColor ? pc.yellow('Would replace (wrong target):') : 'Would replace:');
+    for (const item of groups.wrongTarget) {
+      const displaySource = getDisplaySource(item.source);
+      const displayActual = item.actual.startsWith(dotfilesPath)
+        ? item.actual.slice(dotfilesPath.length + 1)
+        : item.actual;
+      console.log(useColor
+        ? `  ${pc.yellow('~')} ${displaySource} (currently -> ${displayActual})`
+        : `  [replace] ${displaySource} (currently -> ${displayActual})`
+      );
+    }
+    console.log('');
+  }
+
+  // Conflicts (red)
+  if (groups.conflict.length > 0) {
+    console.log(useColor ? pc.red('Conflicts (file exists, not symlink):') : 'Conflicts:');
+    for (const item of groups.conflict) {
+      const displaySource = getDisplaySource(item.source);
+      console.log(useColor
+        ? `  ${pc.red('!')} ${displaySource} at ${item.target}`
+        : `  [conflict] ${displaySource} at ${item.target}`
+      );
+    }
+    console.log('');
+  }
+
+  const hasConflicts = groups.conflict.length > 0;
+  const hasWrongTargets = groups.wrongTarget.length > 0;
 
   if (hasConflicts) {
-    console.log('Warning: Some targets already exist and are not symlinks.');
+    console.log(useColor
+      ? pc.red('Warning: Some targets already exist and are not symlinks.')
+      : 'Warning: Some targets already exist and are not symlinks.'
+    );
     console.log('Use --force to overwrite, or move/remove them first.\n');
   }
 
   if (hasWrongTargets) {
-    console.log('Note: Some symlinks point to different targets.');
+    console.log(useColor
+      ? pc.yellow('Note: Some symlinks point to different targets.')
+      : 'Note: Some symlinks point to different targets.'
+    );
     console.log('Use --force to update them to the correct targets.\n');
   }
 
