@@ -503,14 +503,11 @@ async function browseDirectory(startPath: string): Promise<string> {
     const parentPath = dirname(currentPath);
     const canGoUp = parentPath !== currentPath; // Not at root
 
-    // Build options
-    const options: Array<{ value: string; label: string; hint?: string }> = [
-      { value: '__select__', label: 'Use this directory', hint: formatPath(currentPath) },
-      { value: '__create__', label: 'Create new folder here' },
-    ];
+    // Build options - navigation first, then selection
+    const options: Array<{ value: string; label: string; hint?: string }> = [];
 
     if (canGoUp) {
-      options.push({ value: '__up__', label: '..', hint: 'Go up' });
+      options.push({ value: '__up__', label: '..', hint: 'go up' });
     }
 
     // Add subdirectories
@@ -522,6 +519,10 @@ async function browseDirectory(startPath: string): Promise<string> {
         hint: isHidden ? 'hidden' : undefined,
       });
     }
+
+    // Selection options at the bottom
+    options.push({ value: '__select__', label: `✓ Select "${basename(currentPath)}"`, hint: 'use this folder' });
+    options.push({ value: '__create__', label: '+ Create new folder here' });
 
     const result = await p.select({
       message: `Browse: ${formatPath(currentPath)}`,
