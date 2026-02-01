@@ -197,6 +197,13 @@ async function initImpl(options: InitOptions): Promise<void> {
     throw new Error("HOME environment variable is not set");
   }
 
+  // Dry-run state: apply by default unless --dry-run
+  let shouldApply = !options.dryRun;
+
+  if (options.dryRun) {
+    p.log.info(pc.cyan('DRY RUN MODE - No changes will be made'));
+  }
+
   // 1. Check existing state
   const existingState = await loadState();
   if (existingState?.dotfilesPath && !options.force) {
@@ -581,41 +588,100 @@ async function initImpl(options: InitOptions): Promise<void> {
       ...(brewfileConfig && { brewfile: brewfileConfig }),
     };
 
-    // Write config
-    await writeConfig(dotfilesPath, config);
-    p.log.success("Created dot.config.json");
+    // Write config (only if applying)
+    if (shouldApply) {
+      await writeConfig(dotfilesPath, config);
+      p.log.success("Created dot.config.json");
+    } else {
+      p.log.info(pc.dim('Skipping config write (dry-run)'));
+    }
   }
 
   // 6. Initialize git if needed
-  await initGitRepo(dotfilesPath);
+  if (shouldApply) {
+    await initGitRepo(dotfilesPath);
 
-  // Check if there are uncommitted changes we should offer to commit
-  const { exitCode: statusCode } = await $`git -C ${dotfilesPath} status --porcelain`.quiet().nothrow();
-  if (statusCode === 0) {
-    const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
-    if (statusOutput.trim()) {
-      // If autoCommit is enabled, just commit. Otherwise ask.
-      const shouldCommit = config?.autoCommit ?? await confirm("Create initial commit?");
-      if (shouldCommit) {
-        await $`git -C ${dotfilesPath} add -A`.quiet();
-        await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
-        p.log.success("Created initial commit");
+    // Check if there are uncommitted changes we should offer to commit
+    const { exitCode: statusCode } = await $`git -C ${dotfilesPath} status --porcelain`.quiet().nothrow();
+    if (statusCode === 0) {
+      const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
+      if (statusOutput.trim()) {
+        // If autoCommit is enabled, just commit. Otherwise ask.
+        const shouldCommit = config?.autoCommit ?? await confirm("Create initial commit?");
+        if (shouldCommit) {
+          await $`git -C ${dotfilesPath} add -A`.quiet();
+          await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
+          p.log.success("Created initial commit");
+        }
       }
     }
+  } else {
+    p.log.info(pc.dim('Skipping git operations (dry-run)'));
   }
 
   // 7. Preview and confirm
   if (Object.keys(config!.links).length > 0) {
-    const preview = await previewSymlinks(config!.links, dotfilesPath);
+    const preview = await previewSymlinks(config!.links, dotfilesPath, { colored: true });
+
+    if (options.dryRun) {
+      // In dry-run mode, offer to apply now
+      console.log(pc.cyan('\n--- END DRY RUN PREVIEW ---\n'));
+
+      const applyNow = await p.confirm({
+        message: 'Apply these changes now?',
+        initialValue: false,
+      });
+
+      if (p.isCancel(applyNow)) {
+        cancel('Operation cancelled');
+        return;
+      }
+
+      if (applyNow) {
+        shouldApply = true;
+        p.log.info('Applying changes...');
+
+        // Write config now (was skipped earlier)
+        await writeConfig(dotfilesPath, config!);
+        p.log.success("Created dot.config.json");
+
+        // Initialize git now (was skipped earlier)
+        await initGitRepo(dotfilesPath);
+
+        // Create initial commit if there are uncommitted changes
+        const { exitCode: statusCode } = await $`git -C ${dotfilesPath} status --porcelain`.quiet().nothrow();
+        if (statusCode === 0) {
+          const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
+          if (statusOutput.trim()) {
+            const shouldCommit = config?.autoCommit ?? await confirm("Create initial commit?");
+            if (shouldCommit) {
+              await $`git -C ${dotfilesPath} add -A`.quiet();
+              await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
+              p.log.success("Created initial commit");
+            }
+          }
+        }
+      } else {
+        p.log.info('No changes made. Run without --dry-run to apply.');
+        return;
+      }
+    }
 
     if (preview.hasConflicts && !options.force) {
       console.log("Resolve conflicts first, or use --force to override.");
       return;
     }
 
-    if (!(await confirm("Create these symlinks?"))) {
-      console.log("Skipping symlink creation.");
-    } else {
+    // Ask for confirmation (skip in dry-run since we already asked "Apply now?")
+    let createSymlinks = shouldApply;
+    if (shouldApply && !options.dryRun) {
+      createSymlinks = await confirm("Create these symlinks?");
+      if (!createSymlinks) {
+        console.log("Skipping symlink creation.");
+      }
+    }
+
+    if (createSymlinks) {
       // 8. Execute
       // First migrate selected dotfiles if any
       if (selectedDotfiles.length > 0) {
@@ -642,14 +708,16 @@ async function initImpl(options: InitOptions): Promise<void> {
     console.log("\nNo symlinks to create (empty configuration).");
   }
 
-  // 9. Save state
-  await saveState({
-    dotfilesPath,
-    configuredAt: new Date().toISOString(),
-  });
+  // 9. Save state (only if applying)
+  if (shouldApply) {
+    await saveState({
+      dotfilesPath,
+      configuredAt: new Date().toISOString(),
+    });
 
-  // Success message
-  outro(`Dotfiles initialized at ${dotfilesPath}. Run 'dot doctor' to verify.`);
+    // Success message
+    outro(`Dotfiles initialized at ${dotfilesPath}. Run 'dot doctor' to verify.`);
+  }
 }
 
 /**
