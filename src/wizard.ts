@@ -894,3 +894,174 @@ export async function resolveUnlinkedFiles(
 
   return resolved;
 }
+
+/**
+ * Scan dotfiles repo for files not covered by COMMON_DOTFILES.
+ * Returns a list of unknown repo files that could be linked.
+ */
+export async function scanUnknownRepoFiles(
+  dotfilesPath: string,
+  knownSources: Set<string>
+): Promise<Array<{ repoPath: string; relativePath: string }>> {
+  const unknownFiles: Array<{ repoPath: string; relativePath: string }> = [];
+
+  // Directories to skip in the dotfiles repo
+  const skipDirs = new Set(['.git', 'node_modules', '.planning', '.claude']);
+
+  async function scanDir(dirPath: string, depth: number = 0): Promise<void> {
+    if (depth > 3) return; // Limit depth
+
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = resolve(dirPath, entry.name);
+        const relativePath = relative(dotfilesPath, fullPath);
+
+        // Skip hidden files at root level (like .git, .gitignore)
+        if (depth === 0 && entry.name.startsWith('.')) {
+          continue;
+        }
+
+        // Skip known directories
+        if (entry.isDirectory() && skipDirs.has(entry.name)) {
+          continue;
+        }
+
+        // Skip dot.config.json and similar config files
+        if (entry.name === 'dot.config.json' || entry.name === 'dot.config.ts') {
+          continue;
+        }
+
+        // Skip if this source is already known
+        if (knownSources.has(fullPath) || knownSources.has(relativePath)) {
+          continue;
+        }
+
+        if (entry.isDirectory()) {
+          // Recurse into directories
+          await scanDir(fullPath, depth + 1);
+        } else if (entry.isFile()) {
+          // Skip common non-config files
+          if (entry.name.endsWith('.md') || entry.name === 'README' ||
+              entry.name === 'LICENSE' || entry.name === 'package.json' ||
+              entry.name === 'package-lock.json' || entry.name === 'bun.lockb' ||
+              entry.name.endsWith('.test.ts') || entry.name.endsWith('.spec.ts')) {
+            continue;
+          }
+
+          unknownFiles.push({ repoPath: fullPath, relativePath });
+        }
+      }
+    } catch {
+      // Skip directories we can't read
+    }
+  }
+
+  await scanDir(dotfilesPath);
+  return unknownFiles;
+}
+
+/**
+ * Let user specify link targets for unknown repo files.
+ * Returns a list of DetectedDotfile entries for files user wants to link.
+ */
+export async function configureUnknownFiles(
+  unknownFiles: Array<{ repoPath: string; relativePath: string }>,
+  dotfilesPath: string
+): Promise<DetectedDotfile[]> {
+  if (unknownFiles.length === 0) {
+    return [];
+  }
+
+  p.log.info(`Found ${unknownFiles.length} file(s) in repo not in common dotfiles list:`);
+  for (const file of unknownFiles.slice(0, 10)) {
+    console.log(`  ${file.relativePath}`);
+  }
+  if (unknownFiles.length > 10) {
+    console.log(`  ... and ${unknownFiles.length - 10} more`);
+  }
+  console.log('');
+
+  const result = await p.select({
+    message: 'Would you like to configure symlinks for these files?',
+    options: [
+      { value: 'skip', label: 'Skip for now', hint: 'use "dot track" later to add them' },
+      { value: 'configure', label: 'Configure now', hint: 'specify where each should be linked' },
+    ],
+  });
+
+  checkCancel(result);
+
+  if (result === 'skip') {
+    return [];
+  }
+
+  // Let user configure each file
+  const configured: DetectedDotfile[] = [];
+  const home = process.env.HOME ?? '';
+
+  for (const file of unknownFiles) {
+    // Suggest a path based on the file location
+    // e.g., "myapp/config.toml" -> "~/.config/myapp/config.toml"
+    const suggestedTarget = inferLinkTarget(file.relativePath);
+
+    p.log.step(`${file.relativePath}`);
+
+    const pathResult = await p.text({
+      message: `Link to (Enter to skip, or specify path):`,
+      placeholder: suggestedTarget,
+      defaultValue: '',
+    });
+
+    checkCancel(pathResult);
+
+    const pathValue = (pathResult as string)?.trim();
+
+    if (!pathValue) {
+      p.log.warn(`  Skipped - use "dot track" later`);
+      continue;
+    }
+
+    // Expand ~ and resolve
+    const targetPath = expandPath(pathValue);
+
+    configured.push({
+      path: targetPath,
+      name: relative(home, targetPath),
+      suggested: file.relativePath,
+      sourcePath: file.repoPath,
+      isDirectory: false,
+      status: 'in-repo',
+    });
+
+    p.log.success(`  ${file.relativePath} -> ${formatPath(targetPath)}`);
+  }
+
+  return configured;
+}
+
+/**
+ * Infer a reasonable link target based on repo file path.
+ * e.g., "nvim/init.lua" -> "~/.config/nvim/init.lua"
+ *       "zsh/aliases" -> "~/.config/zsh/aliases"
+ */
+function inferLinkTarget(repoPath: string): string {
+  // Common patterns
+  const configDirFiles = ['nvim', 'alacritty', 'kitty', 'wezterm', 'helix', 'karabiner'];
+  const parts = repoPath.split('/');
+  const firstDir = parts[0];
+
+  // If first directory is a known config app, suggest ~/.config/...
+  if (firstDir && configDirFiles.includes(firstDir)) {
+    return `~/.config/${repoPath}`;
+  }
+
+  // If it looks like a shell config, suggest home directory
+  if (firstDir === 'zsh' || firstDir === 'bash') {
+    return `~/.config/${repoPath}`;
+  }
+
+  // Default: suggest ~/.config/path
+  return `~/.config/${repoPath}`;
+}

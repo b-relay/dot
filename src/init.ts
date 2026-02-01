@@ -12,6 +12,8 @@ import {
   confirm,
   buildLinksFromDotfiles,
   resolveUnlinkedFiles,
+  scanUnknownRepoFiles,
+  configureUnknownFiles,
   UserCancelledError,
   intro,
   outro,
@@ -338,9 +340,26 @@ async function initImpl(options: InitOptions): Promise<void> {
       }) as DetectedDotfile[];
     }
 
+    // 4b. Scan for unknown repo files (not in COMMON_DOTFILES)
+    // Build set of known sources from what we've already found
+    const knownSources = new Set<string>();
+    for (const df of [...alreadyLinked, ...resolvedInRepo, ...selectedDotfiles]) {
+      if (df.sourcePath) {
+        knownSources.add(df.sourcePath);
+      }
+      knownSources.add(df.suggested);
+    }
+
+    const unknownFiles = await scanUnknownRepoFiles(dotfilesPath, knownSources);
+    let configuredUnknown: DetectedDotfile[] = [];
+
+    if (unknownFiles.length > 0) {
+      configuredUnknown = await configureUnknownFiles(unknownFiles, dotfilesPath);
+    }
+
     // 5. Generate config
     // Include in-repo files (they need symlinks) and already-linked files (preserve existing config)
-    const allToLink = [...selectedDotfiles, ...resolvedInRepo, ...alreadyLinked];
+    const allToLink = [...selectedDotfiles, ...resolvedInRepo, ...alreadyLinked, ...configuredUnknown];
 
     // Ask about autoCommit
     const autoCommit = await confirm("Enable auto-commit when tracking new files?");

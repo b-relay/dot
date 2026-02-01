@@ -1212,7 +1212,12 @@ function help() {
   console.log("  move <path>     Relocate dotfiles folder to new location");
   console.log("    --force, -f   Override if destination exists");
   console.log("  update          Check for and install updates");
-  console.log("  --version       Show version number");
+  console.log("  help            Show this help message");
+  console.log("");
+  console.log("Global options:");
+  console.log("  --dotfiles <path>  Override dotfiles location");
+  console.log("  --version, -v      Show version number");
+  console.log("  --help, -h         Show this help message");
 }
 
 // CLI entry point
@@ -1238,6 +1243,12 @@ async function main() {
   // Handle --version flag
   if (args.includes("--version") || args.includes("-v")) {
     console.log(`dot v${VERSION}`);
+    return;
+  }
+
+  // Handle --help flag
+  if (args.includes("--help") || args.includes("-h")) {
+    help();
     return;
   }
 
