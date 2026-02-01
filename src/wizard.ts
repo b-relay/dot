@@ -4,6 +4,15 @@ import { resolve, dirname, basename } from 'node:path';
 import type { LinkMap } from './types';
 
 /**
+ * Status of a detected dotfile relative to the dotfiles repo.
+ */
+export type DotfileStatus =
+  | 'available'      // File exists in home, not yet tracked
+  | 'already-linked' // File is a symlink pointing to dotfiles repo
+  | 'already-tracked' // File exists in dotfiles repo (source exists)
+  | 'conflict';       // File exists in both places but not linked
+
+/**
  * Detected dotfile with metadata for migration wizard.
  */
 export type DetectedDotfile = {
@@ -12,6 +21,7 @@ export type DetectedDotfile = {
   suggested: string;      // Suggested location in repo (e.g., git/.gitconfig)
   isDirectory: boolean;   // Whether it's a directory
   warning?: string;       // Warning message (e.g., for .ssh/config)
+  status?: DotfileStatus; // Status relative to dotfiles repo
 };
 
 /**
@@ -257,24 +267,91 @@ export async function promptDotfilesLocation(): Promise<string> {
 }
 
 /**
- * Scan home directory for common dotfiles.
- * Returns array of detected dotfiles with metadata.
+ * Check if a path is a symlink pointing to a location within the dotfiles repo.
  */
-export async function scanCommonDotfiles(home: string): Promise<DetectedDotfile[]> {
+async function isSymlinkTo(path: string, dotfilesPath: string): Promise<boolean> {
+  try {
+    const fileStat = await lstat(path);
+    if (!fileStat.isSymbolicLink()) {
+      return false;
+    }
+    const target = await import('node:fs/promises').then(fs => fs.readlink(path));
+    const resolvedTarget = resolve(dirname(path), target);
+    return resolvedTarget.startsWith(dotfilesPath + '/') || resolvedTarget === dotfilesPath;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Scan home directory for common dotfiles.
+ * If dotfilesPath is provided, determines status of each file relative to the repo.
+ * Returns array of detected dotfiles with metadata and status.
+ */
+export async function scanCommonDotfiles(
+  home: string,
+  dotfilesPath?: string
+): Promise<DetectedDotfile[]> {
   const found: DetectedDotfile[] = [];
 
   for (const entry of COMMON_DOTFILES) {
     const fullPath = resolve(home, entry.path);
-    if (await pathExists(fullPath)) {
-      const isDir = await isDirectory(fullPath);
-      found.push({
-        path: fullPath,
-        name: entry.path,
-        suggested: entry.suggested,
-        isDirectory: isDir,
-        warning: entry.warning,
-      });
+    const homeFileExists = await pathExists(fullPath);
+
+    // If no dotfiles path provided, just check if file exists
+    if (!dotfilesPath) {
+      if (homeFileExists) {
+        const isDir = await isDirectory(fullPath);
+        found.push({
+          path: fullPath,
+          name: entry.path,
+          suggested: entry.suggested,
+          isDirectory: isDir,
+          warning: entry.warning,
+          status: 'available',
+        });
+      }
+      continue;
     }
+
+    // Check if source exists in dotfiles repo
+    const sourcePath = resolve(dotfilesPath, entry.suggested);
+    const sourceExists = await pathExists(sourcePath);
+
+    // Determine status
+    let status: DotfileStatus;
+
+    if (homeFileExists) {
+      // Check if it's already a symlink to our dotfiles
+      if (await isSymlinkTo(fullPath, dotfilesPath)) {
+        status = 'already-linked';
+      } else if (sourceExists) {
+        // Both exist but not linked - conflict
+        status = 'conflict';
+      } else {
+        // Home file exists, source doesn't - available to migrate
+        status = 'available';
+      }
+    } else if (sourceExists) {
+      // Source exists in repo but no home file - already tracked, needs symlink
+      status = 'already-tracked';
+    } else {
+      // Neither exists, skip
+      continue;
+    }
+
+    const isDir = homeFileExists
+      ? await isDirectory(fullPath)
+      : await isDirectory(sourcePath);
+
+    found.push({
+      path: fullPath,
+      name: entry.path,
+      suggested: entry.suggested,
+      isDirectory: isDir,
+      warning: entry.warning,
+      status,
+    });
   }
 
   return found;

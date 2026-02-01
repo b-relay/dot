@@ -3,6 +3,7 @@ import { mkdir, stat, rename, symlink, lstat, readlink } from "node:fs/promises"
 import { dirname, resolve } from "node:path";
 import { loadState, saveState } from "./state";
 import { loadConfig, writeConfig } from "./config";
+import * as p from '@clack/prompts';
 import {
   promptDotfilesLocation,
   scanCommonDotfiles,
@@ -15,6 +16,7 @@ import {
   outro,
   cancel,
   type DetectedDotfile,
+  type DotfileStatus,
 } from "./wizard";
 import type { DotConfig, LinkMap } from "./types";
 
@@ -243,27 +245,49 @@ async function initImpl(options: InitOptions): Promise<void> {
   let selectedDotfiles: DetectedDotfile[] = [];
 
   if (!useExistingConfig) {
-    // 4. Scan for existing dotfiles
-    console.log("\nScanning for dotfiles to migrate...");
-    const foundDotfiles = await scanCommonDotfiles(home);
+    // 4. Scan for existing dotfiles (with awareness of what's in dotfiles repo)
+    const foundDotfiles = await scanCommonDotfiles(home, dotfilesPath);
 
-    if (foundDotfiles.length === 0) {
-      console.log("No common dotfiles found in home directory.");
-    } else {
-      console.log(`Found ${foundDotfiles.length} dotfile(s):\n`);
+    // Categorize by status
+    const alreadyLinked = foundDotfiles.filter(df => df.status === 'already-linked');
+    const alreadyTracked = foundDotfiles.filter(df => df.status === 'already-tracked');
+    const available = foundDotfiles.filter(df => df.status === 'available');
+    const conflicts = foundDotfiles.filter(df => df.status === 'conflict');
 
-      // Show found dotfiles
-      for (const df of foundDotfiles) {
-        const typeLabel = df.isDirectory ? "(dir)" : "";
-        console.log(`  ${df.name} ${typeLabel}`);
-        if (df.warning) {
-          console.log(`    Warning: ${df.warning}`);
-        }
+    // Show summary of what's already set up
+    if (alreadyLinked.length > 0) {
+      p.log.success(`Already linked (${alreadyLinked.length}):`);
+      for (const df of alreadyLinked) {
+        console.log(`  ${df.name} -> ${df.suggested}`);
       }
-      console.log("");
+    }
+
+    if (alreadyTracked.length > 0) {
+      p.log.info(`In repo, needs symlink (${alreadyTracked.length}):`);
+      for (const df of alreadyTracked) {
+        console.log(`  ${df.suggested}`);
+      }
+    }
+
+    if (conflicts.length > 0) {
+      p.log.warn(`Conflicts - file exists in both locations (${conflicts.length}):`);
+      for (const df of conflicts) {
+        console.log(`  ${df.name} (home) vs ${df.suggested} (repo)`);
+      }
+    }
+
+    // Only offer to migrate files that are available
+    if (available.length === 0) {
+      if (foundDotfiles.length === 0) {
+        p.log.info("No common dotfiles found.");
+      } else {
+        p.log.info("All detected dotfiles are already tracked or linked.");
+      }
+    } else {
+      p.log.step(`Available to migrate (${available.length}):`);
 
       // Convert to selectable items
-      const selectableItems = foundDotfiles.map(df => ({
+      const selectableItems = available.map(df => ({
         text: df.name,
         description: df.warning ?? `-> ${df.suggested}`,
         ...df,
@@ -277,13 +301,14 @@ async function initImpl(options: InitOptions): Promise<void> {
     }
 
     // 5. Generate config
-    console.log("\nGenerating configuration...");
+    // Include already-tracked files in the config (they need symlinks)
+    const allToLink = [...selectedDotfiles, ...alreadyTracked];
 
     // Ask about autoCommit
     const autoCommit = await confirm("Enable auto-commit when tracking new files?");
 
-    // Build links from selected dotfiles
-    const links = buildLinksFromDotfiles(selectedDotfiles, dotfilesPath);
+    // Build links from selected + already-tracked dotfiles
+    const links = buildLinksFromDotfiles(allToLink, dotfilesPath);
 
     config = {
       links,
@@ -292,7 +317,7 @@ async function initImpl(options: InitOptions): Promise<void> {
 
     // Write config
     await writeConfig(dotfilesPath, config);
-    console.log("Created dot.config.json");
+    p.log.success("Created dot.config.json");
   }
 
   // 6. Initialize git if needed
