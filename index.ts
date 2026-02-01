@@ -13,6 +13,10 @@ import {
 import { dirname, resolve, isAbsolute } from "node:path";
 import { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
 import { getDotfilesPath, loadState, saveState } from "./src/state";
+import { track, parseTrackArgs } from "./src/track";
+import type { TrackOptions } from "./src/track";
+import { init, parseInitArgs } from "./src/init";
+import type { InitOptions } from "./src/init";
 import type { DotConfig, LinkMap, DotState } from "./src/types";
 
 const REVIEW_EXPIRY_DAYS = 90;
@@ -1144,6 +1148,9 @@ function help() {
   console.log(
     "  review <path>   Mark a path as reviewed (excludes from doctor for 90 days)",
   );
+  console.log("  track <path>    Add file to dotfiles repo and create symlink");
+  console.log("    --as <path>   Specify destination path in repo (e.g., --as zsh/aliases)");
+  console.log("    --force, -f   Skip confirmations");
 }
 
 // CLI entry point
@@ -1204,12 +1211,33 @@ async function main() {
     case "doctor":
       await doctor(config);
       break;
-    case "review":
+    case "review": {
       // Find the path argument (after "review")
       const reviewIdx = args.indexOf("review");
       const pathArg = reviewIdx >= 0 ? args[reviewIdx + 1] : undefined;
       await review(config, pathArg);
       break;
+    }
+    case "track": {
+      // Parse track-specific args (everything after "track")
+      const trackIdx = args.indexOf("track");
+      const trackArgs = trackIdx >= 0 ? args.slice(trackIdx + 1) : [];
+      const { targetPath, options: trackOptions } = parseTrackArgs(trackArgs);
+
+      if (!targetPath) {
+        console.log("Usage: dot track <path> [--as <dest>] [--force]");
+        console.log("");
+        console.log("Add a file or directory to your dotfiles repo.");
+        console.log("");
+        console.log("Options:");
+        console.log("  --as <path>   Destination path in repo (e.g., --as zsh/aliases)");
+        console.log("  --force, -f   Skip confirmations and auto-backup on conflict");
+        process.exit(1);
+      }
+
+      await track(targetPath, dotfilesPath, dotConfig, trackOptions);
+      break;
+    }
     default:
       console.error(`Unknown command: ${command}`);
       help();
@@ -1237,7 +1265,9 @@ export const __test = {
 // Re-export config and state modules
 export { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
 export { getDotfilesPath, loadState, saveState } from "./src/state";
+export { track, parseTrackArgs } from "./src/track";
 export type { DotConfig, LinkMap, DotState } from "./src/types";
+export type { TrackOptions } from "./src/track";
 
 // Exports for testing
 export {
