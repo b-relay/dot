@@ -48,25 +48,25 @@
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| UPDATE-01 | — | Pending |
-| UPDATE-02 | — | Pending |
-| UPDATE-03 | — | Pending |
-| UPDATE-04 | — | Pending |
-| UPDATE-05 | — | Pending |
-| DIAG-01 | — | Pending |
-| DIAG-02 | — | Pending |
-| BREW-01 | — | Pending |
-| BREW-02 | — | Pending |
-| BREW-03 | — | Pending |
-| BREW-04 | — | Pending |
-| BREW-05 | — | Pending |
-| REVIEW-01 | — | Pending |
-| REVIEW-02 | — | Pending |
-| REVIEW-03 | — | Pending |
-| INIT-01 | — | Pending |
-| INIT-02 | — | Pending |
-| INIT-03 | — | Pending |
-| INIT-04 | — | Pending |
+| INIT-01 | Phase 7 | Pending |
+| INIT-02 | Phase 7 | Pending |
+| INIT-03 | Phase 7 | Pending |
+| INIT-04 | Phase 7 | Pending |
+| REVIEW-01 | Phase 8 | Pending |
+| REVIEW-02 | Phase 8 | Pending |
+| REVIEW-03 | Phase 8 | Pending |
+| BREW-01 | Phase 9 | Pending |
+| BREW-02 | Phase 9 | Pending |
+| BREW-03 | Phase 9 | Pending |
+| BREW-04 | Phase 9 | Pending |
+| BREW-05 | Phase 9 | Pending |
+| DIAG-01 | Phase 10 | Pending |
+| DIAG-02 | Phase 10 | Pending |
+| UPDATE-01 | Phase 11 | Pending |
+| UPDATE-02 | Phase 11 | Pending |
+| UPDATE-03 | Phase 11 | Pending |
+| UPDATE-04 | Phase 11 | Pending |
+| UPDATE-05 | Phase 11 | Pending |
 
 ---
-*19 requirements across 5 categories*
+*19 requirements across 5 categories - 100% mapped to phases*

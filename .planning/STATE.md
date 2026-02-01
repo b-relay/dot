@@ -4,46 +4,70 @@
 
 See: .planning/PROJECT.md (updated 2026-02-01)
 
-**Core value:** Users can set up and manage their dotfiles with confidence
+**Core value:** Users can set up and manage their dotfiles with confidence — clear guidance, dependency validation, and interactive tools prevent the "install succeeded but nothing works" experience.
 **Current focus:** v2.1 Polish & Self-Update
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-02-01 — Milestone v2.1 started
+Phase: 7 of 11 (Init Wizard Fixes)
+Plan: Ready to plan
+Status: Ready to plan
+Last activity: 2026-02-01 — Roadmap created for v2.1 milestone
 
-Progress: [░░░░░░░░░░] 0% (starting new milestone)
+Progress: [████████████░░░░░░░░] 55% (6 of 11 phases complete)
 
-## Milestones Shipped
+## Performance Metrics
 
-| Milestone | Phases | Shipped |
-|-----------|--------|---------|
-| v1.0 Onboarding MVP | 1-3 | 2026-01-25 |
-| v1.1 Architecture Portability | 4-5 | 2026-01-26 |
-| v2.0 Standalone CLI | 6 | 2026-02-01 |
+**Velocity:**
+- Total plans completed: N/A (prior milestones not tracked in this format)
+- Average duration: TBD
+- Total execution time: TBD
 
-See .planning/MILESTONES.md for full details.
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| 7. Init Wizard Fixes | 0 | - | - |
+| 8. Doctor-Reviewed Migration | 0 | - | - |
+| 9. Brewfile Sync UX | 0 | - | - |
+| 10. Enhanced Diagnostics | 0 | - | - |
+| 11. Self-Update Foundation | 0 | - | - |
+
+**Recent Trend:**
+- Last 5 plans: None yet (new milestone)
+- Trend: N/A
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
 ### Decisions
 
-Major decisions logged in PROJECT.md Key Decisions table.
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- v2.0: JSON primary, TS secondary for config — Compiled binaries cannot dynamically import TS
+- v2.0: State at ~/.config/dot/state.json — XDG Base Directory pattern
+- v2.0: @clack/prompts for wizard UI — Better UX than bun-promptx
+- v2.0: Deep scan 3-4 levels for symlinks — Find symlinks in ~/.config subdirs
 
 ### Pending Todos
 
-(Moved to v2.1 requirements)
+None yet.
 
 ### Blockers/Concerns
 
-None.
+**Phase 7 (Init Wizard Fixes):**
+- INIT-04 (conflict bug) needs investigation first — research flagged this as requiring deeper understanding
+
+**Phase 11 (Self-Update Foundation):**
+- GitHub Actions workflow for binary builds needs creation (external setup)
+- Binary signing/attestation strategy needs decision (checksums minimum, attestations ideal)
+- Test on real macOS hardware required for ETXTBSY and rename() atomicity verification
 
 ## Session Continuity
 
-Last session: 2026-02-01
-Stopped at: Starting v2.1 requirements definition
+Last session: 2026-02-01 (roadmap creation)
+Stopped at: Roadmap and STATE.md created for v2.1 milestone
 Resume file: None
-
-Next: Complete requirements → roadmap
+Next action: Run `/gsd:plan-phase 7` to begin Phase 7 planning
