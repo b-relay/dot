@@ -380,16 +380,56 @@ async function initImpl(options: InitOptions): Promise<void> {
             if (action === 'all') {
               selectedDotfiles.push(df);
             } else if (action === 'pick') {
-              const contentItems = contents.map(c => ({
-                text: c.name.split('/').pop() + (c.isDirectory ? '/' : ''),
-                description: `-> ${c.suggested}`,
-                ...c,
-              }));
+              const contentItems = contents.map(c => {
+                let text = c.name.split('/').pop()!;
+                let description = `-> ${c.suggested}`;
+                if (c.isDirectory) {
+                  text += `/ (${c.fileCount ?? 0} items)`;
+                  description = 'select to review contents';
+                }
+                return { text, description, ...c };
+              });
               const selectedFiles = await selectItems(contentItems, {
                 headerText: `Select files from ${df.name}`,
                 multi: true,
               }) as DetectedDotfile[];
-              selectedDotfiles.push(...selectedFiles);
+
+              // Recursively handle any selected subfolders
+              for (const sf of selectedFiles) {
+                if (sf.isDirectory && sf.fileCount && sf.fileCount > 0) {
+                  const subContents = await listDirectoryContents(sf.path, sf.name, sf.suggested);
+                  if (subContents.length > 0) {
+                    const subAction = await p.select({
+                      message: `Include all of ${sf.name.split('/').pop()}/ or pick files?`,
+                      options: [
+                        { value: 'all', label: 'Include entire folder' },
+                        { value: 'pick', label: 'Pick specific files' },
+                        { value: 'skip', label: 'Skip' },
+                      ],
+                    });
+                    if (p.isCancel(subAction)) throw new UserCancelledError();
+
+                    if (subAction === 'all') {
+                      selectedDotfiles.push(sf);
+                    } else if (subAction === 'pick') {
+                      const subItems = subContents.map(sc => ({
+                        text: sc.name.split('/').pop() + (sc.isDirectory ? '/' : ''),
+                        description: `-> ${sc.suggested}`,
+                        ...sc,
+                      }));
+                      const subSelected = await selectItems(subItems, {
+                        headerText: `Select from ${sf.name}`,
+                        multi: true,
+                      }) as DetectedDotfile[];
+                      selectedDotfiles.push(...subSelected);
+                    }
+                  } else {
+                    selectedDotfiles.push(sf);
+                  }
+                } else {
+                  selectedDotfiles.push(sf);
+                }
+              }
             }
             // 'skip' does nothing - folder not added
           } else {
