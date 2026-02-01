@@ -704,6 +704,10 @@ export async function scanCommonDotfiles(
       if (entry.name === '.config') continue;
 
       const fullPath = resolve(home, entry.name);
+
+      // Skip the dotfiles repo itself
+      if (dotfilesPath && fullPath === dotfilesPath) continue;
+
       const symlinkInfo = allDiscoveredSymlinks.get(fullPath);
 
       await addDetected(fullPath, entry.name, symlinkInfo);
