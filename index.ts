@@ -19,8 +19,10 @@ import { init, parseInitArgs } from "./src/init";
 import type { InitOptions } from "./src/init";
 import { move } from "./src/move";
 import type { MoveOptions } from "./src/move";
+import { update } from "./src/update";
 import type { DotConfig, LinkMap, DotState } from "./src/types";
 
+const VERSION = "0.1.0";
 const REVIEW_EXPIRY_DAYS = 90;
 
 const DEPENDENCIES: readonly Dependency[] = [
@@ -1171,6 +1173,8 @@ Data:`;
 }
 
 function help() {
+  console.log(`dot v${VERSION}`);
+  console.log("");
   console.log("Usage: dot <command>");
   console.log("");
   console.log("Commands:");
@@ -1192,6 +1196,8 @@ function help() {
   console.log("    --force, -f   Skip confirmations");
   console.log("  move <path>     Relocate dotfiles folder to new location");
   console.log("    --force, -f   Override if destination exists");
+  console.log("  update          Check for and install updates");
+  console.log("  --version       Show version number");
 }
 
 // CLI entry point
@@ -1214,9 +1220,21 @@ async function main() {
     }
   }
 
+  // Handle --version flag
+  if (args.includes("--version") || args.includes("-v")) {
+    console.log(`dot v${VERSION}`);
+    return;
+  }
+
   // Handle commands that don't require initialization
   if (command === "help" || command === undefined) {
     help();
+    return;
+  }
+
+  // Update command doesn't require initialization
+  if (command === "update") {
+    await update();
     return;
   }
 
@@ -1349,6 +1367,8 @@ export { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
 export { getDotfilesPath, loadState, saveState } from "./src/state";
 export { track, parseTrackArgs } from "./src/track";
 export { move } from "./src/move";
+export { update } from "./src/update";
+export { VERSION };
 export type { DotConfig, LinkMap, DotState } from "./src/types";
 export type { TrackOptions } from "./src/track";
 export type { MoveOptions } from "./src/move";
