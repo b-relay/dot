@@ -245,6 +245,50 @@ export async function listDirectoryContents(
 }
 
 /**
+ * Recursively get all files in a directory (not folders, just files).
+ * Used when user wants to symlink all files individually instead of the folder.
+ */
+export async function getAllFilesRecursively(
+  dirPath: string,
+  relativeName: string,
+  suggestedBase: string
+): Promise<DetectedDotfile[]> {
+  const results: DetectedDotfile[] = [];
+
+  async function recurse(currentPath: string, currentName: string, currentSuggested: string) {
+    try {
+      const entries = await readdir(currentPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+
+        const fullPath = resolve(currentPath, entry.name);
+        const name = `${currentName}/${entry.name}`;
+        const suggested = `${currentSuggested}/${entry.name}`;
+
+        if (entry.isDirectory()) {
+          // Recurse into subdirectory
+          await recurse(fullPath, name, suggested);
+        } else {
+          // Add file
+          results.push({
+            path: fullPath,
+            name,
+            suggested,
+            isDirectory: false,
+            status: 'available',
+          });
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  await recurse(dirPath, relativeName, suggestedBase);
+  return results;
+}
+
+/**
  * Custom error class for user cancellation (Ctrl+C).
  * This allows callers to distinguish between errors and user abort.
  */

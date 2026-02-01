@@ -15,6 +15,7 @@ import {
   scanUnknownRepoFiles,
   configureUnknownFiles,
   listDirectoryContents,
+  getAllFilesRecursively,
   UserCancelledError,
   intro,
   outro,
@@ -378,7 +379,32 @@ async function initImpl(options: InitOptions): Promise<void> {
             }
 
             if (action === 'all') {
-              selectedDotfiles.push(df);
+              // Ask how to symlink the folder
+              const linkStyle = await p.select({
+                message: `How should ${df.name}/ be symlinked?`,
+                options: [
+                  { value: 'folder', label: 'Symlink the folder itself', hint: 'one symlink for the whole folder' },
+                  { value: 'files', label: 'Symlink each file individually', hint: 'separate symlinks, preserves folder structure' },
+                ],
+              });
+
+              if (p.isCancel(linkStyle)) {
+                throw new UserCancelledError();
+              }
+
+              if (linkStyle === 'folder') {
+                selectedDotfiles.push(df);
+              } else {
+                // Get all files recursively and add them individually
+                const allFiles = await getAllFilesRecursively(df.path, df.name, df.suggested);
+                if (allFiles.length > 0) {
+                  p.log.info(`Found ${allFiles.length} files to symlink individually`);
+                  selectedDotfiles.push(...allFiles);
+                } else {
+                  // Empty folder, just symlink the folder
+                  selectedDotfiles.push(df);
+                }
+              }
             } else if (action === 'pick') {
               const contentItems = contents.map(c => {
                 let text = c.name.split('/').pop()!;
