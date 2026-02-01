@@ -16,6 +16,7 @@ import {
   configureUnknownFiles,
   listDirectoryContents,
   getAllFilesRecursively,
+  printTreeRecursive,
   UserCancelledError,
   intro,
   outro,
@@ -351,117 +352,99 @@ async function initImpl(options: InitOptions): Promise<void> {
         multi: true,
       }) as DetectedDotfile[];
 
-      // For selected folders, offer to drill down and pick specific files
+      // Helper to handle a folder selection recursively
+      async function handleFolder(df: DetectedDotfile): Promise<DetectedDotfile[]> {
+        const results: DetectedDotfile[] = [];
+        const contents = await listDirectoryContents(df.path, df.name, df.suggested);
+
+        if (contents.length === 0) {
+          return [df]; // Empty folder
+        }
+
+        // Show tree view of contents
+        console.log(`\n${df.name}/`);
+        await printTreeRecursive(df.path, '', 3);
+        console.log('');
+
+        const action = await p.select({
+          message: `How do you want to handle ${df.name}/?`,
+          options: [
+            { value: 'all', label: 'Include entire folder', hint: 'symlink the whole folder' },
+            { value: 'files', label: 'Include all as individual files', hint: 'separate symlinks for each file' },
+            { value: 'pick', label: 'Pick specific items', hint: 'choose which to include' },
+            { value: 'skip', label: 'Skip this folder', hint: 'don\'t migrate any of it' },
+          ],
+        });
+
+        if (p.isCancel(action)) throw new UserCancelledError();
+
+        if (action === 'skip') {
+          return [];
+        }
+
+        // Ask for custom folder name in dotfiles
+        const defaultName = df.suggested;
+        const folderName = await p.text({
+          message: 'Folder name in dotfiles repo:',
+          defaultValue: defaultName,
+          placeholder: defaultName,
+        });
+
+        if (p.isCancel(folderName)) throw new UserCancelledError();
+
+        const customSuggested = folderName as string;
+
+        if (action === 'all') {
+          // Symlink the folder itself with custom name
+          results.push({ ...df, suggested: customSuggested });
+        } else if (action === 'files') {
+          // Get all files recursively
+          const allFiles = await getAllFilesRecursively(df.path, df.name, customSuggested);
+          if (allFiles.length > 0) {
+            p.log.info(`Found ${allFiles.length} files`);
+            results.push(...allFiles);
+          } else {
+            results.push({ ...df, suggested: customSuggested });
+          }
+        } else if (action === 'pick') {
+          // Show items for selection
+          const contentItems = contents.map(c => {
+            const itemName = c.name.split('/').pop()!;
+            let text = c.isDirectory ? `${itemName}/ (${c.fileCount ?? 0} items)` : itemName;
+            return {
+              text,
+              description: c.isDirectory ? 'folder' : 'file',
+              ...c,
+              // Update suggested path with custom folder name
+              suggested: `${customSuggested}/${itemName}`,
+            };
+          });
+
+          const selectedFiles = await selectItems(contentItems, {
+            headerText: `Select items from ${df.name}`,
+            multi: true,
+          }) as DetectedDotfile[];
+
+          for (const sf of selectedFiles) {
+            if (sf.isDirectory && sf.fileCount && sf.fileCount > 0) {
+              // Recursively handle subfolder
+              const subResults = await handleFolder(sf);
+              results.push(...subResults);
+            } else {
+              results.push(sf);
+            }
+          }
+        }
+
+        return results;
+      }
+
+      // Process selected folders
       selectedDotfiles = [];
       for (const df of initialSelection) {
         if (df.isDirectory && df.fileCount && df.fileCount > 0) {
-          const contents = await listDirectoryContents(df.path, df.name, df.suggested);
-          if (contents.length > 0) {
-            p.log.info(`\n${df.name}/ contains ${df.fileCount} items:`);
-            for (const c of contents.slice(0, 5)) {
-              console.log(`  ${c.name.split('/').pop()}${c.isDirectory ? '/' : ''}`);
-            }
-            if (contents.length > 5) {
-              console.log(`  ... and ${contents.length - 5} more`);
-            }
-
-            const action = await p.select({
-              message: `How do you want to handle ${df.name}/?`,
-              options: [
-                { value: 'all', label: 'Include entire folder', hint: 'migrate everything' },
-                { value: 'pick', label: 'Pick specific files', hint: 'choose which to include' },
-                { value: 'skip', label: 'Skip this folder', hint: 'don\'t migrate any of it' },
-              ],
-            });
-
-            if (p.isCancel(action)) {
-              throw new UserCancelledError();
-            }
-
-            if (action === 'all') {
-              // Ask how to symlink the folder
-              const linkStyle = await p.select({
-                message: `How should ${df.name}/ be symlinked?`,
-                options: [
-                  { value: 'folder', label: 'Symlink the folder itself', hint: 'one symlink for the whole folder' },
-                  { value: 'files', label: 'Symlink each file individually', hint: 'separate symlinks, preserves folder structure' },
-                ],
-              });
-
-              if (p.isCancel(linkStyle)) {
-                throw new UserCancelledError();
-              }
-
-              if (linkStyle === 'folder') {
-                selectedDotfiles.push(df);
-              } else {
-                // Get all files recursively and add them individually
-                const allFiles = await getAllFilesRecursively(df.path, df.name, df.suggested);
-                if (allFiles.length > 0) {
-                  p.log.info(`Found ${allFiles.length} files to symlink individually`);
-                  selectedDotfiles.push(...allFiles);
-                } else {
-                  // Empty folder, just symlink the folder
-                  selectedDotfiles.push(df);
-                }
-              }
-            } else if (action === 'pick') {
-              const contentItems = contents.map(c => {
-                let text = c.name.split('/').pop()!;
-                let description = `-> ${c.suggested}`;
-                if (c.isDirectory) {
-                  text += `/ (${c.fileCount ?? 0} items)`;
-                  description = 'select to review contents';
-                }
-                return { text, description, ...c };
-              });
-              const selectedFiles = await selectItems(contentItems, {
-                headerText: `Select files from ${df.name}`,
-                multi: true,
-              }) as DetectedDotfile[];
-
-              // Recursively handle any selected subfolders
-              for (const sf of selectedFiles) {
-                if (sf.isDirectory && sf.fileCount && sf.fileCount > 0) {
-                  const subContents = await listDirectoryContents(sf.path, sf.name, sf.suggested);
-                  if (subContents.length > 0) {
-                    const subAction = await p.select({
-                      message: `Include all of ${sf.name.split('/').pop()}/ or pick files?`,
-                      options: [
-                        { value: 'all', label: 'Include entire folder' },
-                        { value: 'pick', label: 'Pick specific files' },
-                        { value: 'skip', label: 'Skip' },
-                      ],
-                    });
-                    if (p.isCancel(subAction)) throw new UserCancelledError();
-
-                    if (subAction === 'all') {
-                      selectedDotfiles.push(sf);
-                    } else if (subAction === 'pick') {
-                      const subItems = subContents.map(sc => ({
-                        text: sc.name.split('/').pop() + (sc.isDirectory ? '/' : ''),
-                        description: `-> ${sc.suggested}`,
-                        ...sc,
-                      }));
-                      const subSelected = await selectItems(subItems, {
-                        headerText: `Select from ${sf.name}`,
-                        multi: true,
-                      }) as DetectedDotfile[];
-                      selectedDotfiles.push(...subSelected);
-                    }
-                  } else {
-                    selectedDotfiles.push(sf);
-                  }
-                } else {
-                  selectedDotfiles.push(sf);
-                }
-              }
-            }
-            // 'skip' does nothing - folder not added
-          } else {
-            // Empty folder, include it anyway
-            selectedDotfiles.push(df);
-          }
+          const folderResults = await handleFolder(df);
+          selectedDotfiles.push(...folderResults);
         } else {
           selectedDotfiles.push(df);
         }

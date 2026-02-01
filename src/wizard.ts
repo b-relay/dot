@@ -289,6 +289,63 @@ export async function getAllFilesRecursively(
 }
 
 /**
+ * Print directory contents in tree format.
+ */
+export function printTree(items: DetectedDotfile[], indent = ''): void {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    const isLast = i === items.length - 1;
+    const prefix = isLast ? '└── ' : '├── ';
+    const name = item.name.split('/').pop()!;
+
+    if (item.isDirectory) {
+      console.log(`${indent}${prefix}${name}/ (${item.fileCount ?? 0} items)`);
+    } else {
+      console.log(`${indent}${prefix}${name}`);
+    }
+  }
+}
+
+/**
+ * Print nested directory contents in tree format (recursive).
+ */
+export async function printTreeRecursive(
+  dirPath: string,
+  indent = '',
+  maxDepth = 3,
+  currentDepth = 0
+): Promise<void> {
+  if (currentDepth >= maxDepth) {
+    console.log(`${indent}└── ...`);
+    return;
+  }
+
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    const filtered = entries.filter(e => !e.name.startsWith('.'));
+
+    for (let i = 0; i < filtered.length; i++) {
+      const entry = filtered[i]!;
+      const isLast = i === filtered.length - 1;
+      const prefix = isLast ? '└── ' : '├── ';
+      const childIndent = indent + (isLast ? '    ' : '│   ');
+
+      if (entry.isDirectory()) {
+        const subPath = resolve(dirPath, entry.name);
+        const subEntries = await readdir(subPath).catch(() => []);
+        const count = subEntries.filter(e => !e.startsWith('.')).length;
+        console.log(`${indent}${prefix}${entry.name}/ (${count} items)`);
+        await printTreeRecursive(subPath, childIndent, maxDepth, currentDepth + 1);
+      } else {
+        console.log(`${indent}${prefix}${entry.name}`);
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+}
+
+/**
  * Interactive file/directory browser for selecting a path.
  * Can select both files and directories.
  * Returns the selected absolute path.
