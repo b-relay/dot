@@ -19,6 +19,7 @@ import {
   getAllFilesRecursively,
   printTreeRecursive,
   resolveConflict,
+  expandPath,
   UserCancelledError,
   intro,
   outro,
@@ -106,8 +107,9 @@ async function getConflicts(
 
   for (const [source, target] of Object.entries(links)) {
     const absSource = resolve(dotfilesPath, source);
+    const expandedTarget = expandPath(target);
     try {
-      const targetStat = await lstat(target);
+      const targetStat = await lstat(expandedTarget);
       if (!targetStat.isSymbolicLink()) {
         // Real file exists - this is a conflict
         conflicts.push({ source: absSource, target });
@@ -132,11 +134,12 @@ async function getWrongTargets(
 
   for (const [source, target] of Object.entries(links)) {
     const absSource = resolve(dotfilesPath, source);
+    const expandedTarget = expandPath(target);
     try {
-      const targetStat = await lstat(target);
+      const targetStat = await lstat(expandedTarget);
       if (targetStat.isSymbolicLink()) {
-        const raw = await readlink(target);
-        const actual = resolve(dirname(target), raw);
+        const raw = await readlink(expandedTarget);
+        const actual = resolve(dirname(expandedTarget), raw);
         if (actual !== absSource) {
           wrongTargets.push({ source, target, actual });
         }
@@ -156,15 +159,17 @@ async function installLinks(links: LinkMap): Promise<void> {
   console.log("\nCreating symlinks...");
 
   for (const [source, target] of Object.entries(links)) {
+    const expandedTarget = expandPath(target);
+
     // Ensure parent directory exists
-    await mkdir(dirname(target), { recursive: true });
+    await mkdir(dirname(expandedTarget), { recursive: true });
 
     try {
       // Check if target already exists
-      const targetStat = await lstat(target);
+      const targetStat = await lstat(expandedTarget);
       if (targetStat.isSymbolicLink()) {
-        const linkTarget = await readlink(target);
-        const resolvedTarget = resolve(dirname(target), linkTarget);
+        const linkTarget = await readlink(expandedTarget);
+        const resolvedTarget = resolve(dirname(expandedTarget), linkTarget);
         if (resolvedTarget === source) {
           console.log(`  [skip] ${target} (already correct)`);
           continue;
@@ -180,7 +185,7 @@ async function installLinks(links: LinkMap): Promise<void> {
         console.log(`  [warn] ${target} skipped (source ${source} does not exist)`);
         continue;
       }
-      await symlink(source, target);
+      await symlink(source, expandedTarget);
       console.log(`  [link] ${target}`);
     }
   }
