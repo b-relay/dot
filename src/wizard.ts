@@ -1364,11 +1364,13 @@ export async function previewSymlinks(
 
   // First pass: categorize all links
   for (const [source, target] of Object.entries(links)) {
+    const expandedTarget = expandPath(target);
+
     // Check if source exists in dotfiles
     const sourceExists = await pathExists(source);
 
     // Check if target already exists
-    const targetExists = await pathExists(target);
+    const targetExists = await pathExists(expandedTarget);
 
     let status: SymlinkPreviewStatus;
     let actualTarget: string | undefined;
@@ -1382,11 +1384,11 @@ export async function previewSymlinks(
     } else {
       // Target exists - check if it's a symlink and where it points
       try {
-        const targetStat = await lstat(target);
+        const targetStat = await lstat(expandedTarget);
         if (targetStat.isSymbolicLink()) {
           // Read where the symlink actually points
-          const linkTarget = await readlink(target);
-          const resolvedTarget = resolve(dirname(target), linkTarget);
+          const linkTarget = await readlink(expandedTarget);
+          const resolvedTarget = resolve(dirname(expandedTarget), linkTarget);
 
           // Compare resolved target with expected source
           if (resolvedTarget === source) {
