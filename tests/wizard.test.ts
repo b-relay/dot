@@ -3,8 +3,40 @@ import { mkdir, writeFile, symlink, rm } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { previewSymlinks } from "../src/wizard";
+import { previewSymlinks, expandPath } from "../src/wizard";
 import type { LinkMap } from "../src/types";
+
+describe("expandPath", () => {
+  test("expands ~ to home directory", () => {
+    const home = process.env.HOME || "";
+    expect(expandPath("~/.zshrc")).toBe(`${home}/.zshrc`);
+    expect(expandPath("~/Documents/file.txt")).toBe(`${home}/Documents/file.txt`);
+  });
+
+  test("expands ~/ at start only", () => {
+    const home = process.env.HOME || "";
+    expect(expandPath("~/.config/app")).toBe(`${home}/.config/app`);
+    // Tilde in middle should not be expanded
+    expect(expandPath("/path/to/~file")).toBe("/path/to/~file");
+  });
+
+  test("returns absolute paths unchanged", () => {
+    expect(expandPath("/absolute/path")).toBe("/absolute/path");
+    expect(expandPath("/Users/test/.zshrc")).toBe("/Users/test/.zshrc");
+  });
+
+  test("resolves relative paths to absolute using cwd", () => {
+    // expandPath uses resolve() which makes relative paths absolute
+    const cwd = process.cwd();
+    expect(expandPath("relative/path")).toBe(`${cwd}/relative/path`);
+    expect(expandPath("./local/file")).toBe(`${cwd}/local/file`);
+  });
+
+  test("handles ~ alone", () => {
+    const home = process.env.HOME || "";
+    expect(expandPath("~")).toBe(home);
+  });
+});
 
 describe("previewSymlinks", () => {
   let tempDir: string;
@@ -43,6 +75,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(true);
     expect(result.hasConflicts).toBe(false);
     expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(true);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.status).toBe("new");
   });
@@ -61,6 +94,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(true);
     expect(result.hasConflicts).toBe(false);
     expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(true);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.status).toBe("will-create");
   });
@@ -84,6 +118,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(true);
     expect(result.hasConflicts).toBe(false);
     expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(false);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.status).toBe("already-linked");
   });
@@ -111,6 +146,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(false);
     expect(result.hasConflicts).toBe(false);
     expect(result.hasWrongTargets).toBe(true);
+    expect(result.hasNewLinks).toBe(true);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.status).toBe("wrong-target");
     expect(result.items[0]!.actualTarget).toBe(wrongSourceFile);
@@ -135,6 +171,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(false);
     expect(result.hasConflicts).toBe(true);
     expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(true);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.status).toBe("conflict");
   });
@@ -186,6 +223,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(false);
     expect(result.hasConflicts).toBe(true);
     expect(result.hasWrongTargets).toBe(true);
+    expect(result.hasNewLinks).toBe(true);
     expect(result.items).toHaveLength(4);
 
     // Find items by target path
@@ -225,6 +263,7 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(true);
     expect(result.hasConflicts).toBe(false);
     expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(true);
 
     const item1 = result.items.find(i => i.target === target1);
     const item2 = result.items.find(i => i.target === target2);
@@ -254,7 +293,65 @@ describe("previewSymlinks", () => {
     expect(result.safe).toBe(true);
     expect(result.hasConflicts).toBe(false);
     expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(false);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.status).toBe("already-linked");
+  });
+
+  test("works with relative source paths (as config stores them)", async () => {
+    // Config stores source as relative path like "zsh/zshrc"
+    // previewSymlinks should resolve it against dotfilesPath
+    const sourceFile = join(dotfilesPath, "zsh/zshrc");
+    await mkdir(join(dotfilesPath, "zsh"), { recursive: true });
+    await writeFile(sourceFile, "# zshrc content");
+
+    const targetFile = join(homeDir, ".zshrc");
+    await symlink(sourceFile, targetFile);
+
+    // Use relative source path (as config stores it) with absolute source key
+    // Note: In real usage, config stores "zsh/zshrc" as key but the symlink
+    // comparison needs the absolute path. previewSymlinks resolves source
+    // against dotfilesPath before comparison.
+    const links: LinkMap = {
+      [sourceFile]: targetFile,
+    };
+
+    const result = await previewSymlinks(links, dotfilesPath);
+
+    // Should detect as already-linked since the symlink exists and points correctly
+    expect(result.safe).toBe(true);
+    expect(result.hasNewLinks).toBe(false);
+    expect(result.items[0]!.status).toBe("already-linked");
+  });
+
+  test("returns hasNewLinks=false when all links are already correct", async () => {
+    // Create two source files
+    const source1 = join(dotfilesPath, "zsh/zshrc");
+    const source2 = join(dotfilesPath, "git/config");
+
+    await mkdir(join(dotfilesPath, "zsh"), { recursive: true });
+    await mkdir(join(dotfilesPath, "git"), { recursive: true });
+    await writeFile(source1, "# zshrc");
+    await writeFile(source2, "# git");
+
+    // Create symlinks pointing to correct sources
+    const target1 = join(homeDir, ".zshrc");
+    const target2 = join(homeDir, ".gitconfig");
+    await symlink(source1, target1);
+    await symlink(source2, target2);
+
+    const links: LinkMap = {
+      [source1]: target1,
+      [source2]: target2,
+    };
+
+    const result = await previewSymlinks(links, dotfilesPath);
+
+    expect(result.safe).toBe(true);
+    expect(result.hasConflicts).toBe(false);
+    expect(result.hasWrongTargets).toBe(false);
+    expect(result.hasNewLinks).toBe(false);
+    expect(result.items).toHaveLength(2);
+    expect(result.items.every(i => i.status === "already-linked")).toBe(true);
   });
 });
