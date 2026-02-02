@@ -686,47 +686,10 @@ async function initImpl(options: InitOptions): Promise<void> {
     const preview = await previewSymlinks(config!.links, dotfilesPath, { colored: true });
 
     if (options.dryRun) {
-      // In dry-run mode, offer to apply now
+      // Dry-run mode: show preview and exit
       console.log(pc.cyan('\n--- END DRY RUN PREVIEW ---\n'));
-
-      const applyNow = await p.confirm({
-        message: 'Apply these changes now?',
-        initialValue: false,
-      });
-
-      if (p.isCancel(applyNow)) {
-        cancel('Operation cancelled');
-        return;
-      }
-
-      if (applyNow) {
-        shouldApply = true;
-        p.log.info('Applying changes...');
-
-        // Write config now (was skipped earlier)
-        await writeConfig(dotfilesPath, config!);
-        p.log.success("Created dot.config.json");
-
-        // Initialize git now (was skipped earlier)
-        await initGitRepo(dotfilesPath);
-
-        // Create initial commit if there are uncommitted changes
-        const { exitCode: statusCode } = await $`git -C ${dotfilesPath} status --porcelain`.quiet().nothrow();
-        if (statusCode === 0) {
-          const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
-          if (statusOutput.trim()) {
-            const shouldCommit = config?.autoCommit ?? await confirm("Create initial commit?");
-            if (shouldCommit) {
-              await $`git -C ${dotfilesPath} add -A`.quiet();
-              await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
-              p.log.success("Created initial commit");
-            }
-          }
-        }
-      } else {
-        p.log.info('No changes made. Run without --dry-run to apply.');
-        return;
-      }
+      p.log.info('No changes made. Run without --dry-run to apply.');
+      return;
     }
 
     // Handle real file conflicts with interactive resolution
