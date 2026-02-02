@@ -123,12 +123,11 @@ describe("REVIEW_EXPIRY_DAYS", () => {
 });
 
 describe("filterBrewfile", () => {
-  test("filters vscode, cargo, and go lines from brew output", () => {
+  test("filters vscode lines from brew output (default excludes)", () => {
     const brewOutput = `tap "homebrew/bundle"
 brew "git"
 vscode "ms-vscode.go"
-cargo "ripgrep"
-go "golang.org/x/tools"
+vscode "esbenp.prettier-vscode"
 brew "tmux"
 cask "firefox"`;
 
@@ -140,14 +139,30 @@ brew "tmux"
 cask "firefox"`);
   });
 
-  test("preserves lines with similar prefixes", () => {
+  test("filters custom exclude list", () => {
+    const brewOutput = `tap "homebrew/bundle"
+brew "git"
+vscode "extension"
+mas "Xcode", id: 497799835
+whalebrew "tool"
+cask "firefox"`;
+
+    // Custom exclude list
+    const filtered = filterBrewfile(brewOutput, ["vscode", "mas", "whalebrew"]);
+
+    expect(filtered).toBe(`tap "homebrew/bundle"
+brew "git"
+cask "firefox"`);
+  });
+
+  test("preserves brew packages with similar names", () => {
     const brewOutput = `brew "vscode-helper"
-brew "cargo-watch"
+brew "go"
 brew "golang"`;
 
     const filtered = filterBrewfile(brewOutput);
 
-    // All lines should be preserved (they don't start with excluded patterns)
+    // All lines should be preserved - these are brew packages, not vscode lines
     expect(filtered).toBe(brewOutput);
   });
 
@@ -162,24 +177,30 @@ brew "golang"`;
 
   test("handles lines with leading whitespace", () => {
     const input = `  vscode "indented"
-	cargo "tabbed"
+	mas "tabbed"
 brew "normal"`;
     // Lines with leading whitespace are still filtered (trimStart is used)
-    expect(filterBrewfile(input)).toBe("brew \"normal\"");
+    expect(filterBrewfile(input, ["vscode", "mas"])).toBe("brew \"normal\"");
   });
 
   test("handles input with only filtered lines", () => {
     const input = `vscode "a"
-cargo "b"
-go "c"`;
+vscode "b"`;
     expect(filterBrewfile(input)).toBe("");
   });
 
-  test("case sensitive - does NOT filter uppercase", () => {
+  test("case insensitive matching", () => {
     const input = `Vscode "upper"
-CARGO "upper"
-GO "upper"`;
-    // Uppercase prefixes should be preserved (unlikely but testing case sensitivity)
-    expect(filterBrewfile(input)).toBe(input);
+VSCODE "allcaps"
+MAS "upper"`;
+    // Case-insensitive matching filters all variations
+    expect(filterBrewfile(input, ["vscode", "mas"])).toBe("");
+  });
+
+  test("empty exclude list preserves all lines", () => {
+    const input = `vscode "a"
+mas "b"
+brew "c"`;
+    expect(filterBrewfile(input, [])).toBe(input);
   });
 });
