@@ -850,6 +850,71 @@ function formatIgnoreConfirmation(entry: ReviewedEntry): string {
 
 // --- End ignore duration helpers ---
 
+// --- Ignore management commands ---
+
+/**
+ * List all ignored paths with their expiry status.
+ */
+async function listIgnored(): Promise<void> {
+  const paths = await readReviewedPaths();
+  const entries = Object.entries(paths);
+
+  if (entries.length === 0) {
+    p.log.info('No ignored paths');
+    return;
+  }
+
+  // Separate active and expired
+  const now = new Date();
+  const active: [string, ReviewedEntry][] = [];
+  const expired: [string, ReviewedEntry][] = [];
+
+  for (const [path, entry] of entries) {
+    if (isIgnored(entry, now)) {
+      active.push([path, entry]);
+    } else {
+      expired.push([path, entry]);
+    }
+  }
+
+  if (active.length > 0) {
+    p.log.step(`Ignored paths (${active.length}):`);
+    for (const [path, entry] of active) {
+      if (entry.type === 'forever') {
+        console.log(`  ${path} (permanent)`);
+      } else {
+        console.log(`  ${path} (until ${entry.expiresAt})`);
+      }
+    }
+  }
+
+  if (expired.length > 0) {
+    p.log.step(`Expired (${expired.length}):`);
+    for (const [path] of expired) {
+      console.log(`  ${path}`);
+    }
+  }
+}
+
+/**
+ * Remove a path from the ignore list.
+ */
+async function unignorePath(inputPath: string, home: string): Promise<void> {
+  const normalizedPath = normalizePath(home, inputPath);
+  const paths = await readReviewedPaths();
+
+  if (!(normalizedPath in paths)) {
+    p.log.warn(`Path not in ignore list: ${normalizedPath}`);
+    return;
+  }
+
+  delete paths[normalizedPath];
+  await writeReviewedPaths(paths);
+  p.log.success(`Removed from ignore list: ${normalizedPath}`);
+}
+
+// --- End ignore management commands ---
+
 function normalizePath(home: string, inputPath: string): string {
   // Expand ~ and ~/ to home
   if (inputPath === "~") {
@@ -1506,7 +1571,9 @@ function help() {
   console.log(
     "  doctor          Analyze dotfiles with Claude and suggest fixes",
   );
-  console.log("  doctor ignore [path]  Exclude path from doctor for 90 days");
+  console.log("  ignore [path]   Ignore path from doctor analysis");
+  console.log("    --list        List all ignored paths");
+  console.log("    --unignore <path>  Remove path from ignore list");
   console.log("    --cwd         Start browser from current directory");
   console.log("  link [path]     Add file to dotfiles repo and create symlink");
   console.log("    --as <path>   Destination in repo (e.g., --as zsh/aliases)");
@@ -1615,13 +1682,50 @@ async function main() {
       }
       break;
     }
+    case "ignore": {
+      const ignoreIdx = args.indexOf("ignore");
+
+      // Check for --list flag
+      if (args.includes("--list")) {
+        await listIgnored();
+        break;
+      }
+
+      // Check for --unignore flag
+      const unignoreIdx = args.indexOf("--unignore");
+      if (unignoreIdx !== -1) {
+        const pathArg = args[unignoreIdx + 1];
+        if (!pathArg || pathArg.startsWith("--")) {
+          p.log.error("Usage: dot ignore --unignore <path>");
+          process.exit(1);
+        }
+        await unignorePath(pathArg, config.home);
+        break;
+      }
+
+      // Default: ignore a path (same as doctor ignore)
+      const ignoreOptions: DoctorIgnoreOptions = {};
+
+      if (args.includes("--cwd")) {
+        ignoreOptions.cwd = true;
+      }
+
+      // Path is argument after "ignore" if not a flag
+      const pathArg = args[ignoreIdx + 1];
+      if (pathArg && !pathArg.startsWith("--")) {
+        ignoreOptions.path = pathArg;
+      }
+
+      await doctorIgnore(config, ignoreOptions);
+      break;
+    }
     case "doctor": {
       // Check for subcommand
       const doctorIdx = args.indexOf("doctor");
       const subcommand = doctorIdx >= 0 ? args[doctorIdx + 1] : undefined;
 
       if (subcommand === "ignore") {
-        // Parse ignore options
+        // Parse ignore options (backward compatibility)
         const ignoreOptions: DoctorIgnoreOptions = {};
         const pathArg = args[doctorIdx + 2];
 
