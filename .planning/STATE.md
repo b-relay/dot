@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 Phase: 9 of 11 (Brewfile Sync UX & Commands) NOT STARTED
 Plan: 0 of TBD complete
 Status: Ready to discuss/plan
-Last activity: 2026-02-02 — Phase 8.1 complete (symlink path fix)
+Last activity: 2026-02-02 — Completed quick task 001: Update tests for phase 8.1 changes
 
 Progress: [█████████████████████] 100% (Phase 8.1 complete, 17/17 plans)
 
@@ -67,6 +67,12 @@ Recent decisions affecting current work:
 
 None yet.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 001 | Update tests for phase 8.1 changes | 2026-02-02 | f6112d4 | [001-update-tests-for-phase-8-1-changes](./quick/001-update-tests-for-phase-8-1-changes/) |
+
 ### Blockers/Concerns
 
 **Phase 7 (Init Wizard Fixes):** ALL RESOLVED
@@ -83,7 +89,7 @@ None yet.
 **Phase 8.1 (Symlink Path Fix):** ALL RESOLVED
 - installLinks() now expands ~ to home directory before filesystem operations
 - getConflicts(), getWrongTargets(), previewSymlinks() also fixed
-- All 218 tests pass
+- All 225 tests pass (7 new tests added in quick-001)
 
 **Phase 11 (Self-Update Foundation):**
 - GitHub Actions workflow for binary builds needs creation (external setup)
