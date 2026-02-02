@@ -1,5 +1,6 @@
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
+import { createTwoFilesPatch } from 'diff';
 import { stat, lstat, readdir, mkdir, readlink } from 'node:fs/promises';
 import { resolve, dirname, basename, relative } from 'node:path';
 import type { LinkMap, CustomPatterns } from './types';
@@ -1796,4 +1797,175 @@ function inferLinkTarget(repoPath: string): string {
 
   // Default: suggest ~/.config/path
   return `~/.config/${repoPath}`;
+}
+
+/**
+ * Result of conflict resolution for a single file.
+ */
+export type ConflictResolution =
+  | { action: 'backup'; backupPath: string }
+  | { action: 'skip' }
+  | { action: 'merge'; markerPath: string };
+
+/**
+ * Display diff between existing file and dotfiles source.
+ */
+async function showDiff(existingFile: string, sourceFile: string): Promise<void> {
+  try {
+    const existingContent = await Bun.file(existingFile).text();
+    const sourceContent = await Bun.file(sourceFile).text();
+
+    const patch = createTwoFilesPatch(
+      'existing',
+      'dotfiles',
+      existingContent,
+      sourceContent,
+      'Current file',
+      'From dotfiles repo'
+    );
+
+    console.log('\n' + pc.dim('-'.repeat(60)));
+    console.log(pc.bold('Diff:'));
+    // Color the diff output
+    for (const line of patch.split('\n')) {
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        console.log(pc.green(line));
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        console.log(pc.red(line));
+      } else if (line.startsWith('@@')) {
+        console.log(pc.cyan(line));
+      } else {
+        console.log(line);
+      }
+    }
+    console.log(pc.dim('-'.repeat(60)) + '\n');
+  } catch (error) {
+    p.log.error(`Could not read files for diff: ${error}`);
+  }
+}
+
+/**
+ * Create merge conflict markers in a .conflict file.
+ * Returns the path for user to manually resolve.
+ */
+async function createMergeMarkers(
+  existingFile: string,
+  sourceFile: string
+): Promise<ConflictResolution> {
+  try {
+    const existingContent = await Bun.file(existingFile).text();
+    const sourceContent = await Bun.file(sourceFile).text();
+
+    const mergedContent = `<<<<<<< EXISTING (${existingFile})
+${existingContent}=======
+${sourceContent}>>>>>>> DOTFILES (${sourceFile})
+`;
+
+    // Write merged content with .conflict extension
+    const conflictPath = `${existingFile}.conflict`;
+    await Bun.write(conflictPath, mergedContent);
+
+    p.log.info(`Created ${conflictPath}`);
+    p.log.info('Edit this file to resolve conflicts, then rename to replace original.');
+
+    return { action: 'merge', markerPath: conflictPath };
+  } catch (error) {
+    p.log.error(`Could not create merge markers: ${error}`);
+    return { action: 'skip' };
+  }
+}
+
+/**
+ * Resolve a single file conflict interactively.
+ * Offers 4 options per CONTEXT.md decisions:
+ * 1. Backup and replace
+ * 2. Show diff first (then choose)
+ * 3. Create merge conflict markers
+ * 4. Skip this file
+ *
+ * No "apply to all" - each conflict handled individually.
+ */
+export async function resolveConflict(
+  existingFile: string,
+  sourceFile: string,
+  dotfilesPath: string
+): Promise<ConflictResolution> {
+  const displayPath = existingFile.replace(process.env.HOME ?? '', '~');
+  const displaySource = sourceFile.startsWith(dotfilesPath)
+    ? sourceFile.slice(dotfilesPath.length + 1)
+    : sourceFile;
+
+  p.log.warn(`Conflict: ${displayPath}`);
+  p.log.info(`  Dotfiles has: ${displaySource}`);
+  p.log.info(`  But file already exists (not a symlink)`);
+
+  const choice = await p.select({
+    message: `How would you like to resolve ${displayPath}?`,
+    options: [
+      {
+        value: 'backup',
+        label: 'Backup and replace',
+        hint: 'Move existing file to .backup, create symlink',
+      },
+      {
+        value: 'diff',
+        label: 'Show diff first',
+        hint: 'See differences, then choose',
+      },
+      {
+        value: 'merge',
+        label: 'Create merge markers',
+        hint: 'Add git-style conflict markers for manual resolution',
+      },
+      {
+        value: 'skip',
+        label: 'Skip this file',
+        hint: 'Leave existing file, don\'t create symlink',
+      },
+    ],
+  });
+
+  if (p.isCancel(choice)) {
+    return { action: 'skip' };
+  }
+
+  if (choice === 'backup') {
+    // Create backup with timestamp to avoid collisions
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const backupPath = `${existingFile}.backup-${timestamp}`;
+    return { action: 'backup', backupPath };
+  }
+
+  if (choice === 'diff') {
+    // Show diff and re-prompt
+    await showDiff(existingFile, sourceFile);
+    // After viewing diff, offer simplified choice
+    const afterDiff = await p.select({
+      message: 'After viewing diff, what would you like to do?',
+      options: [
+        { value: 'backup', label: 'Backup and replace' },
+        { value: 'merge', label: 'Create merge markers' },
+        { value: 'skip', label: 'Skip this file' },
+      ],
+    });
+
+    if (p.isCancel(afterDiff) || afterDiff === 'skip') {
+      return { action: 'skip' };
+    }
+
+    if (afterDiff === 'backup') {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const backupPath = `${existingFile}.backup-${timestamp}`;
+      return { action: 'backup', backupPath };
+    }
+
+    // Fall through to merge
+    return await createMergeMarkers(existingFile, sourceFile);
+  }
+
+  if (choice === 'merge') {
+    return await createMergeMarkers(existingFile, sourceFile);
+  }
+
+  return { action: 'skip' };
 }
