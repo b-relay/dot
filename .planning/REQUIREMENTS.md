@@ -15,10 +15,12 @@
 
 ### Brewfile Sync
 - [ ] **BREW-01**: Sync discovers package types dynamically from `brew bundle dump` output
-- [ ] **BREW-02**: User is prompted interactively to select which types to exclude
+- [ ] **BREW-02**: User is prompted interactively to select which types to exclude (only types present in dump)
 - [ ] **BREW-03**: Exclusion preferences are stored in dot config (not hardcoded)
 - [ ] **BREW-04**: No default exclusions - user explicitly chooses
 - [ ] **BREW-05**: Remove `sync config` subcommand - inline exclusion flow into `sync`
+- [ ] **BREW-06**: Remove brewfile exclusion prompt from init wizard (belongs in sync)
+- [ ] **BREW-07**: Sync auto-commits when autoCommit is enabled in config
 
 ### Doctor-Reviewed
 - [x] **REVIEW-01**: Reviewed paths stored at `~/.config/dot/reviewed.json` (create dir if needed)
@@ -30,6 +32,13 @@
 - [x] **INIT-02**: Add `--dry-run` flag to test init without making changes
 - [x] **INIT-03**: Non-valuable dotfiles (caches, temp) are annotated with notes
 - [x] **INIT-04**: Investigate and fix false conflict detection bug
+- [ ] **INIT-05**: Fix symlink path expansion - `~` must expand to home directory in init
+
+### Command Structure
+- [ ] **CMD-01**: `dot doctor --ignore [path]` replaces `dot ignore [path]`
+- [ ] **CMD-02**: `dot doctor --unignore` shows picker of ignored paths (no path argument)
+- [ ] **CMD-03**: Add "current directory" option in file browser for --ignore
+- [ ] **CMD-04**: `dot list` command shows symlinks, ignored paths, sync excludes
 
 ## Future Requirements
 
@@ -52,14 +61,21 @@
 | INIT-02 | Phase 7 | Complete |
 | INIT-03 | Phase 7 | Complete |
 | INIT-04 | Phase 7 | Complete |
+| INIT-05 | Phase 8.1 | Pending |
 | REVIEW-01 | Phase 8 | Complete |
 | REVIEW-02 | Phase 8 | Complete |
 | REVIEW-03 | Phase 8 | Complete |
+| CMD-01 | Phase 9 | Pending |
+| CMD-02 | Phase 9 | Pending |
+| CMD-03 | Phase 9 | Pending |
+| CMD-04 | Phase 9 | Pending |
 | BREW-01 | Phase 9 | Pending |
 | BREW-02 | Phase 9 | Pending |
 | BREW-03 | Phase 9 | Pending |
 | BREW-04 | Phase 9 | Pending |
 | BREW-05 | Phase 9 | Pending |
+| BREW-06 | Phase 9 | Pending |
+| BREW-07 | Phase 9 | Pending |
 | DIAG-01 | Phase 10 | Pending |
 | DIAG-02 | Phase 10 | Pending |
 | UPDATE-01 | Phase 11 | Pending |
@@ -69,4 +85,4 @@
 | UPDATE-05 | Phase 11 | Pending |
 
 ---
-*19 requirements across 5 categories - 100% mapped to phases*
+*26 requirements across 7 categories - 100% mapped to phases*

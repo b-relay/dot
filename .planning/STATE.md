@@ -9,10 +9,10 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 
 ## Current Position
 
-Phase: 8 of 11 (Doctor-Reviewed Migration) COMPLETE
-Plan: 2 of 2 complete
-Status: Phase verified ✓
-Last activity: 2026-02-02 — Phase 8 verified, all 6 success criteria passed
+Phase: 8.1 of 11 (Symlink Path Fix) NOT STARTED
+Plan: 0 of 1 complete
+Status: Ready to plan
+Last activity: 2026-02-02 — Phase 8 complete, Phase 8.1 inserted for critical symlink bug
 
 Progress: [████████████████████] 100% (Phase 8 complete, 16/16 plans)
 
@@ -29,7 +29,8 @@ Progress: [████████████████████] 100% (P
 |-------|-------|-------|----------|
 | 7. Init Wizard Fixes | 4/4 | ~31min | ~8min |
 | 8. Doctor-Reviewed Migration | 2/2 | ~15min | ~8min |
-| 9. Brewfile Sync UX | 0 | - | - |
+| 8.1 Symlink Path Fix | 0/1 | - | - |
+| 9. Brewfile Sync UX & Commands | 0 | - | - |
 | 10. Enhanced Diagnostics | 0 | - | - |
 | 11. Self-Update Foundation | 0 | - | - |
 
@@ -78,6 +79,11 @@ None yet.
 - All ignore duration and management features complete
 - Doctor integration complete with expired notification
 
+**Phase 8.1 (Symlink Path Fix):** CRITICAL BUG
+- `installLinks()` in init.ts doesn't expand `~` to home directory
+- Creates literal `~/` folder inside dotfiles repo
+- Also affects `getConflicts()`, `getWrongTargets()`, `previewSymlinks()`
+
 **Phase 11 (Self-Update Foundation):**
 - GitHub Actions workflow for binary builds needs creation (external setup)
 - Binary signing/attestation strategy needs decision (checksums minimum, attestations ideal)
@@ -88,4 +94,4 @@ None yet.
 Last session: 2026-02-02
 Stopped at: Completed 08-02-PLAN.md (duration selection UI)
 Resume file: None
-Next action: Run `/gsd:discuss-phase 9` or `/gsd:plan-phase 9` to begin Phase 9
+Next action: Run `/gsd:plan-phase 8.1` to fix critical symlink bug

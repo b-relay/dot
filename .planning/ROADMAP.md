@@ -101,16 +101,35 @@ Plans:
 - [x] 08-01-PLAN.md — Migrate reviewed paths storage and schema
 - [x] 08-02-PLAN.md — Add ignore commands and duration selection UI
 
-### Phase 9: Brewfile Sync UX
-**Goal**: Brewfile sync adapts to installed packages and lets users control exclusions
-**Depends on**: Nothing (enhancement of existing sync functionality)
-**Requirements**: BREW-01, BREW-02, BREW-03, BREW-04, BREW-05
+### Phase 8.1: Symlink Path Fix (INSERTED)
+**Goal**: Fix critical bug where init creates symlinks in literal `~/` folder instead of home directory
+**Depends on**: Phase 8 (uses same reviewed paths but critical path fix)
+**Requirements**: INIT-05
+**Success Criteria** (what must be TRUE):
+  1. `installLinks()` expands `~` to actual home directory before creating symlinks
+  2. `getConflicts()` and `getWrongTargets()` use expanded paths for checks
+  3. `previewSymlinks()` uses expanded paths for `lstat()` checks
+  4. Init wizard creates symlinks at correct locations (e.g., `/Users/brendon/.zshenv` not `/Users/brendon/.dotfiles/~/.zshenv`)
+**Plans**: 1 plan
+
+Plans:
+- [ ] 08.1-01-PLAN.md — Fix tilde expansion in init symlink creation
+
+### Phase 9: Brewfile Sync UX & Command Restructure
+**Goal**: Brewfile sync adapts to installed packages, users control exclusions, and commands are restructured for clarity
+**Depends on**: Phase 8.1 (fixes init, this phase restructures commands)
+**Requirements**: BREW-01 through BREW-07, CMD-01 through CMD-04
 **Success Criteria** (what must be TRUE):
   1. Sync discovers package types dynamically from brew bundle dump output
-  2. User is prompted with interactive multiselect to choose exclusions
+  2. User is prompted with interactive multiselect to choose exclusions (only types that exist)
   3. User sees type counts (e.g., "vscode (42 extensions)") in selection UI
   4. Exclusion preferences persist in dot config file
-  5. No hardcoded default exclusions—user makes explicit choices
+  5. No hardcoded default exclusions—user explicitly chooses
+  6. No brewfile exclusion prompt in init wizard (moved to sync)
+  7. Sync auto-commits when autoCommit is enabled
+  8. `dot doctor --ignore [path]` replaces `dot ignore` command
+  9. `dot doctor --unignore` shows picker of ignored paths
+  10. `dot list` shows symlinks, ignored paths, and sync exclude settings
 **Plans**: TBD
 
 Plans:
@@ -149,7 +168,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 7 → 8 → 9 → 10 → 11
+Phases execute in numeric order: 7 → 8 → 8.1 → 9 → 10 → 11
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -161,6 +180,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11
 | 6. Init Wizard | v2.0 | N/A | Complete | 2026-02-01 |
 | 7. Init Wizard Fixes | v2.1 | 4/4 | Complete | 2026-02-01 |
 | 8. Doctor-Reviewed Migration | v2.1 | 2/2 | Complete | 2026-02-02 |
-| 9. Brewfile Sync UX | v2.1 | 0/TBD | Not started | - |
+| 8.1 Symlink Path Fix | v2.1 | 0/1 | Not started | - |
+| 9. Brewfile Sync UX & Commands | v2.1 | 0/TBD | Not started | - |
 | 10. Enhanced Diagnostics | v2.1 | 0/TBD | Not started | - |
 | 11. Self-Update Foundation | v2.1 | 0/TBD | Not started | - |
