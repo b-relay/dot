@@ -2030,3 +2030,12 @@ export async function resolveConflict(
 
   return { action: 'skip' };
 }
+
+// Internal test exports - not part of public API
+export const __test = {
+  FILTERED_DIRS,
+  SKIP_HOME_DOTFILES,
+  SKIP_CONFIG_ENTRIES,
+  DEFAULT_LOW_VALUE_PATTERNS,
+  LOW_VALUE_SUFFIXES,
+};
