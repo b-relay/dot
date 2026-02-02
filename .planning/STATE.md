@@ -9,32 +9,32 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 
 ## Current Position
 
-Phase: 7 of 11 (Init Wizard Fixes)
-Plan: 3 of 4 complete
-Status: In progress
-Last activity: 2026-02-01 — Completed 07-03-PLAN.md (dry-run flag)
+Phase: 7 of 11 (Init Wizard Fixes) COMPLETE
+Plan: 4 of 4 complete
+Status: Phase complete
+Last activity: 2026-02-01 — Completed 07-04-PLAN.md (conflict resolution)
 
-Progress: [██████████████░░░░░░] 68% (07-03 complete, 1 remaining in phase)
+Progress: [███████████████░░░░░] 73% (Phase 7 complete, ready for Phase 8)
 
 ## Performance Metrics
 
 **Velocity:**
 - Total plans completed: N/A (prior milestones not tracked in this format)
 - Average duration: ~8min
-- Total execution time: ~25min
+- Total execution time: ~31min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 7. Init Wizard Fixes | 3/4 | ~25min | ~8min |
+| 7. Init Wizard Fixes | 4/4 | ~31min | ~8min |
 | 8. Doctor-Reviewed Migration | 0 | - | - |
 | 9. Brewfile Sync UX | 0 | - | - |
 | 10. Enhanced Diagnostics | 0 | - | - |
 | 11. Self-Update Foundation | 0 | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 07-01 (~5min), 07-02 (~12min), 07-03 (~8min)
+- Last 5 plans: 07-01 (~5min), 07-02 (~12min), 07-03 (~8min), 07-04 (~6min)
 - Trend: Steady pace
 
 *Updated after each plan completion*
@@ -53,6 +53,9 @@ Recent decisions affecting current work:
 - v2.1: picocolors for terminal styling — Lightweight, no dependencies
 - v2.1: FILTERED_DIRS shown greyed not hidden — User can override with confirmation
 - v2.1: shouldApply boolean pattern for dry-run mutation gating
+- v2.1: Per-conflict resolution (no "apply to all") — Precise user control
+- v2.1: Timestamped backup names — Avoid collision on repeated runs
+- v2.1: Git-style merge markers — Familiar format users recognize
 
 ### Pending Todos
 
@@ -60,11 +63,12 @@ None yet.
 
 ### Blockers/Concerns
 
-**Phase 7 (Init Wizard Fixes):**
+**Phase 7 (Init Wizard Fixes):** ALL RESOLVED
 - INIT-04 (conflict bug) RESOLVED in 07-01 — previewSymlinks now verifies symlink targets
 - INIT-01 (directory filtering) RESOLVED in 07-02 — browseForPath/browseDirectory filter system dirs
 - INIT-03 (file annotations) RESOLVED in 07-02 — low-value files annotated and grouped
 - INIT-02 (dry-run) RESOLVED in 07-03 — --dry-run flag with apply-now conversion
+- Conflict resolution RESOLVED in 07-04 — Interactive 3-option resolution per conflict
 
 **Phase 11 (Self-Update Foundation):**
 - GitHub Actions workflow for binary builds needs creation (external setup)
@@ -74,6 +78,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 07-03-PLAN.md (dry-run flag)
+Stopped at: Completed 07-04-PLAN.md (conflict resolution) - Phase 7 COMPLETE
 Resume file: None
-Next action: Execute 07-04-PLAN.md (conflict resolution)
+Next action: Execute Phase 8 (Doctor-Reviewed Migration)
