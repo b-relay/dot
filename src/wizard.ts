@@ -1331,6 +1331,7 @@ export type PreviewResult = {
   safe: boolean;
   hasConflicts: boolean;
   hasWrongTargets: boolean;
+  hasNewLinks: boolean; // True if there are links to create (not already linked)
   items: Array<{
     source: string;
     target: string;
@@ -1495,7 +1496,8 @@ export async function previewSymlinks(
     console.log('Use --force to update them to the correct targets.\n');
   }
 
-  return { safe: !hasConflicts && !hasWrongTargets, hasConflicts, hasWrongTargets, items };
+  const hasNewLinks = groups.new.length > 0 || groups.willCreate.length > 0 || groups.wrongTarget.length > 0 || groups.conflict.length > 0;
+  return { safe: !hasConflicts && !hasWrongTargets, hasConflicts, hasWrongTargets, hasNewLinks, items };
 }
 
 /**

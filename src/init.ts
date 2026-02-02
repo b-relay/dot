@@ -814,34 +814,39 @@ async function initImpl(options: InitOptions): Promise<void> {
       }
     }
 
-    // Ask for confirmation (skip in dry-run since we already asked "Apply now?")
-    let createSymlinks = shouldApply;
-    if (shouldApply && !options.dryRun) {
-      createSymlinks = await confirm("Create these symlinks?");
-      if (!createSymlinks) {
-        console.log("Skipping symlink creation.");
-      }
-    }
-
-    if (createSymlinks) {
-      // 8. Execute
-      // First migrate selected dotfiles if any
-      if (selectedDotfiles.length > 0) {
-        await migrateDotfiles(selectedDotfiles, dotfilesPath);
+    // Skip if all symlinks are already correctly linked
+    if (!preview.hasNewLinks) {
+      p.log.success('All symlinks are already correctly linked!');
+    } else {
+      // Ask for confirmation (skip in dry-run since we already asked "Apply now?")
+      let createSymlinks = shouldApply;
+      if (shouldApply && !options.dryRun) {
+        createSymlinks = await confirm("Create these symlinks?");
+        if (!createSymlinks) {
+          console.log("Skipping symlink creation.");
+        }
       }
 
-      // Then create symlinks
-      await installLinks(config!.links);
+      if (createSymlinks) {
+        // 8. Execute
+        // First migrate selected dotfiles if any
+        if (selectedDotfiles.length > 0) {
+          await migrateDotfiles(selectedDotfiles, dotfilesPath);
+        }
 
-      // Commit migrated files
-      if (selectedDotfiles.length > 0) {
-        const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
-        if (statusOutput.trim()) {
-          const shouldCommit = config!.autoCommit || await confirm("Commit migrated files?");
-          if (shouldCommit) {
-            await $`git -C ${dotfilesPath} add -A`.quiet();
-            await $`git -C ${dotfilesPath} commit -m "Add migrated dotfiles via dot init"`.quiet();
-            p.log.success("Committed migrated files");
+        // Then create symlinks
+        await installLinks(config!.links);
+
+        // Commit migrated files
+        if (selectedDotfiles.length > 0) {
+          const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
+          if (statusOutput.trim()) {
+            const shouldCommit = config!.autoCommit || await confirm("Commit migrated files?");
+            if (shouldCommit) {
+              await $`git -C ${dotfilesPath} add -A`.quiet();
+              await $`git -C ${dotfilesPath} commit -m "Add migrated dotfiles via dot init"`.quiet();
+              p.log.success("Committed migrated files");
+            }
           }
         }
       }
