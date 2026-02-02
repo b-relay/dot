@@ -18,12 +18,14 @@ import {
   listDirectoryContents,
   getAllFilesRecursively,
   printTreeRecursive,
+  resolveConflict,
   UserCancelledError,
   intro,
   outro,
   cancel,
   type DetectedDotfile,
   type DotfileStatus,
+  type ConflictResolution,
 } from "./wizard";
 import type { DotConfig, LinkMap } from "./types";
 
@@ -90,6 +92,61 @@ async function initGitRepo(path: string): Promise<boolean> {
     console.error(`Failed to init git: ${error instanceof Error ? error.message : error}`);
     return false;
   }
+}
+
+/**
+ * Get list of real file conflicts for resolution.
+ * Returns array of {source, target} pairs where target is a real file (not symlink).
+ */
+async function getConflicts(
+  links: LinkMap,
+  dotfilesPath: string
+): Promise<Array<{ source: string; target: string }>> {
+  const conflicts: Array<{ source: string; target: string }> = [];
+
+  for (const [source, target] of Object.entries(links)) {
+    const absSource = resolve(dotfilesPath, source);
+    try {
+      const targetStat = await lstat(target);
+      if (!targetStat.isSymbolicLink()) {
+        // Real file exists - this is a conflict
+        conflicts.push({ source: absSource, target });
+      }
+    } catch {
+      // Target doesn't exist - not a conflict
+    }
+  }
+
+  return conflicts;
+}
+
+/**
+ * Get list of wrong-target symlinks for resolution.
+ * Returns array of {source, target, actual} where actual is where symlink currently points.
+ */
+async function getWrongTargets(
+  links: LinkMap,
+  dotfilesPath: string
+): Promise<Array<{ source: string; target: string; actual: string }>> {
+  const wrongTargets: Array<{ source: string; target: string; actual: string }> = [];
+
+  for (const [source, target] of Object.entries(links)) {
+    const absSource = resolve(dotfilesPath, source);
+    try {
+      const targetStat = await lstat(target);
+      if (targetStat.isSymbolicLink()) {
+        const raw = await readlink(target);
+        const actual = resolve(dirname(target), raw);
+        if (actual !== absSource) {
+          wrongTargets.push({ source, target, actual });
+        }
+      }
+    } catch {
+      // Target doesn't exist - not wrong target
+    }
+  }
+
+  return wrongTargets;
 }
 
 /**
@@ -667,9 +724,49 @@ async function initImpl(options: InitOptions): Promise<void> {
       }
     }
 
-    if (preview.hasConflicts && !options.force) {
-      console.log("Resolve conflicts first, or use --force to override.");
-      return;
+    // Handle real file conflicts with interactive resolution
+    if (preview.hasConflicts && !options.force && shouldApply) {
+      p.log.warn('Found file conflicts. Resolving each individually...');
+
+      const conflicts = await getConflicts(config!.links, dotfilesPath);
+      const resolutions: Map<string, ConflictResolution> = new Map();
+
+      for (const conflict of conflicts) {
+        const resolution = await resolveConflict(
+          conflict.target,
+          conflict.source,
+          dotfilesPath
+        );
+        resolutions.set(conflict.target, resolution);
+
+        // Execute backup immediately if chosen
+        if (resolution.action === 'backup') {
+          try {
+            await rename(conflict.target, resolution.backupPath);
+            p.log.success(`Backed up to ${resolution.backupPath.replace(process.env.HOME ?? '', '~')}`);
+          } catch (error) {
+            p.log.error(`Failed to backup: ${error}`);
+            resolutions.set(conflict.target, { action: 'skip' });
+          }
+        }
+      }
+
+      // Filter links based on resolutions
+      // Skip items that were skipped or got merge markers
+      const linksToCreate: LinkMap = {};
+      for (const [source, target] of Object.entries(config!.links)) {
+        const resolution = resolutions.get(target);
+        if (!resolution || resolution.action === 'backup') {
+          // No conflict or was backed up - safe to create symlink
+          linksToCreate[source] = target;
+        } else if (resolution.action === 'merge') {
+          p.log.info(`Skipping ${target.replace(process.env.HOME ?? '', '~')} - resolve ${resolution.markerPath.replace(process.env.HOME ?? '', '~')} manually`);
+        }
+        // skip action: don't include in linksToCreate
+      }
+
+      // Update config.links to only include resolved items
+      config!.links = linksToCreate;
     }
 
     // Ask for confirmation (skip in dry-run since we already asked "Apply now?")
