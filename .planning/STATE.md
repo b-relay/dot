@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 
 ## Current Position
 
-Phase: 7 of 11 (Init Wizard Fixes) COMPLETE
-Plan: 4 of 4 complete
-Status: Phase verified ✓
-Last activity: 2026-02-01 — Phase 7 verified, all 5 success criteria passed
+Phase: 8 of 11 (Doctor-Reviewed Migration)
+Plan: 1 of 3 complete
+Status: In progress
+Last activity: 2026-02-01 — Completed 08-01-PLAN.md (schema migration)
 
-Progress: [███████████████░░░░░] 73% (Phase 7 complete, ready for Phase 8)
+Progress: [████████████████░░░░] 77% (Phase 8 plan 1 complete)
 
 ## Performance Metrics
 
@@ -28,13 +28,13 @@ Progress: [███████████████░░░░░] 73% (Ph
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 7. Init Wizard Fixes | 4/4 | ~31min | ~8min |
-| 8. Doctor-Reviewed Migration | 0 | - | - |
+| 8. Doctor-Reviewed Migration | 1/3 | ~12min | ~12min |
 | 9. Brewfile Sync UX | 0 | - | - |
 | 10. Enhanced Diagnostics | 0 | - | - |
 | 11. Self-Update Foundation | 0 | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 07-01 (~5min), 07-02 (~12min), 07-03 (~8min), 07-04 (~6min)
+- Last 5 plans: 07-02 (~12min), 07-03 (~8min), 07-04 (~6min), 08-01 (~12min)
 - Trend: Steady pace
 
 *Updated after each plan completion*
@@ -56,6 +56,8 @@ Recent decisions affecting current work:
 - v2.1: Per-conflict resolution (no "apply to all") — Precise user control
 - v2.1: Timestamped backup names — Avoid collision on repeated runs
 - v2.1: Git-style merge markers — Familiar format users recognize
+- v2.1: ReviewedEntry discriminated union — type: timed | forever for flexible ignore durations
+- v2.1: Reviewed paths at ~/.config/dot/reviewed.json — XDG pattern, machine-specific
 
 ### Pending Todos
 
@@ -78,6 +80,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 07-04-PLAN.md (conflict resolution) - Phase 7 COMPLETE
+Stopped at: Completed 08-01-PLAN.md (schema migration)
 Resume file: None
-Next action: Run `/gsd:discuss-phase 8` or `/gsd:plan-phase 8` to begin Phase 8
+Next action: Execute 08-02-PLAN.md (duration selection UI)
