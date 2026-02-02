@@ -98,8 +98,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — Migrate reviewed paths storage and schema
-- [ ] 08-02-PLAN.md — Add ignore commands and duration selection UI
+- [x] 08-01-PLAN.md — Migrate reviewed paths storage and schema
+- [x] 08-02-PLAN.md — Add ignore commands and duration selection UI
 
 ### Phase 9: Brewfile Sync UX
 **Goal**: Brewfile sync adapts to installed packages and lets users control exclusions
@@ -160,7 +160,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11
 | 5. External Config | v2.0 | N/A | Complete | 2026-02-01 |
 | 6. Init Wizard | v2.0 | N/A | Complete | 2026-02-01 |
 | 7. Init Wizard Fixes | v2.1 | 4/4 | Complete | 2026-02-01 |
-| 8. Doctor-Reviewed Migration | v2.1 | 0/2 | Not started | - |
+| 8. Doctor-Reviewed Migration | v2.1 | 2/2 | Complete | 2026-02-02 |
 | 9. Brewfile Sync UX | v2.1 | 0/TBD | Not started | - |
 | 10. Enhanced Diagnostics | v2.1 | 0/TBD | Not started | - |
 | 11. Self-Update Foundation | v2.1 | 0/TBD | Not started | - |

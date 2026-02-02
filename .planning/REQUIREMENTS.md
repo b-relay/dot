@@ -21,9 +21,9 @@
 - [ ] **BREW-05**: Remove `sync config` subcommand - inline exclusion flow into `sync`
 
 ### Doctor-Reviewed
-- [ ] **REVIEW-01**: Reviewed paths stored at `~/.config/dot/reviewed.json` (create dir if needed)
-- [ ] **REVIEW-02**: User can specify custom ignore duration when reviewing
-- [ ] **REVIEW-03**: User can choose "forever" to permanently ignore a path
+- [x] **REVIEW-01**: Reviewed paths stored at `~/.config/dot/reviewed.json` (create dir if needed)
+- [x] **REVIEW-02**: User can specify custom ignore duration when reviewing
+- [x] **REVIEW-03**: User can choose "forever" to permanently ignore a path
 
 ### Init Wizard Fixes
 - [x] **INIT-01**: Directory browser skips `/tmp` folders
@@ -52,9 +52,9 @@
 | INIT-02 | Phase 7 | Complete |
 | INIT-03 | Phase 7 | Complete |
 | INIT-04 | Phase 7 | Complete |
-| REVIEW-01 | Phase 8 | Pending |
-| REVIEW-02 | Phase 8 | Pending |
-| REVIEW-03 | Phase 8 | Pending |
+| REVIEW-01 | Phase 8 | Complete |
+| REVIEW-02 | Phase 8 | Complete |
+| REVIEW-03 | Phase 8 | Complete |
 | BREW-01 | Phase 9 | Pending |
 | BREW-02 | Phase 9 | Pending |
 | BREW-03 | Phase 9 | Pending |
