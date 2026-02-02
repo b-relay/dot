@@ -769,6 +769,46 @@ async function initImpl(options: InitOptions): Promise<void> {
       config!.links = linksToCreate;
     }
 
+    // Handle wrong-target symlinks with simpler replace/skip options
+    if (preview.hasWrongTargets && !options.force && shouldApply) {
+      p.log.warn('Found symlinks pointing to wrong locations...');
+
+      const wrongTargets = await getWrongTargets(config!.links, dotfilesPath);
+
+      for (const wt of wrongTargets) {
+        const displayPath = wt.target.replace(process.env.HOME ?? '', '~');
+        const displayActual = wt.actual.replace(process.env.HOME ?? '', '~');
+
+        const choice = await p.select({
+          message: `${displayPath} points to wrong location`,
+          options: [
+            {
+              value: 'replace',
+              label: 'Replace symlink',
+              hint: `Currently points to: ${displayActual}`,
+            },
+            {
+              value: 'skip',
+              label: 'Keep current symlink',
+              hint: 'Don\'t change this symlink',
+            },
+          ],
+        });
+
+        if (p.isCancel(choice) || choice === 'skip') {
+          // Remove from links to create
+          // Find the source key for this target
+          for (const [source, target] of Object.entries(config!.links)) {
+            if (target === wt.target) {
+              delete config!.links[source];
+              break;
+            }
+          }
+        }
+        // If 'replace', keep in links - install will overwrite
+      }
+    }
+
     // Ask for confirmation (skip in dry-run since we already asked "Apply now?")
     let createSymlinks = shouldApply;
     if (shouldApply && !options.dryRun) {
