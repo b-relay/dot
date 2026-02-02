@@ -10,31 +10,31 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 ## Current Position
 
 Phase: 8 of 11 (Doctor-Reviewed Migration)
-Plan: 1 of 3 complete
-Status: In progress
-Last activity: 2026-02-01 — Completed 08-01-PLAN.md (schema migration)
+Plan: 2 of 2 complete
+Status: Phase complete
+Last activity: 2026-02-02 — Completed 08-02-PLAN.md (duration selection UI)
 
-Progress: [████████████████░░░░] 77% (Phase 8 plan 1 complete)
+Progress: [████████████████████] 100% (Phase 8 complete, 16/16 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: N/A (prior milestones not tracked in this format)
+- Total plans completed: 16
 - Average duration: ~8min
-- Total execution time: ~31min
+- Total execution time: ~46min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 7. Init Wizard Fixes | 4/4 | ~31min | ~8min |
-| 8. Doctor-Reviewed Migration | 1/3 | ~12min | ~12min |
+| 8. Doctor-Reviewed Migration | 2/2 | ~15min | ~8min |
 | 9. Brewfile Sync UX | 0 | - | - |
 | 10. Enhanced Diagnostics | 0 | - | - |
 | 11. Self-Update Foundation | 0 | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 07-02 (~12min), 07-03 (~8min), 07-04 (~6min), 08-01 (~12min)
+- Last 5 plans: 07-03 (~8min), 07-04 (~6min), 08-01 (~12min), 08-02 (~3min)
 - Trend: Steady pace
 
 *Updated after each plan completion*
@@ -58,6 +58,8 @@ Recent decisions affecting current work:
 - v2.1: Git-style merge markers — Familiar format users recognize
 - v2.1: ReviewedEntry discriminated union — type: timed | forever for flexible ignore durations
 - v2.1: Reviewed paths at ~/.config/dot/reviewed.json — XDG pattern, machine-specific
+- v2.1: Duration options ordered 1 month, Forever, Custom, Don't ignore — Common case first
+- v2.1: Custom days >999 requires confirmation — Catches typos
 
 ### Pending Todos
 
@@ -72,6 +74,10 @@ None yet.
 - INIT-02 (dry-run) RESOLVED in 07-03 — --dry-run flag with apply-now conversion
 - Conflict resolution RESOLVED in 07-04 — Interactive 3-option resolution per conflict
 
+**Phase 8 (Doctor-Reviewed Migration):** ALL RESOLVED
+- All ignore duration and management features complete
+- Doctor integration complete with expired notification
+
 **Phase 11 (Self-Update Foundation):**
 - GitHub Actions workflow for binary builds needs creation (external setup)
 - Binary signing/attestation strategy needs decision (checksums minimum, attestations ideal)
@@ -79,7 +85,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-01
-Stopped at: Completed 08-01-PLAN.md (schema migration)
+Last session: 2026-02-02
+Stopped at: Completed 08-02-PLAN.md (duration selection UI)
 Resume file: None
-Next action: Execute 08-02-PLAN.md (duration selection UI)
+Next action: Phase 8 complete. Phases 9-11 need planning.
