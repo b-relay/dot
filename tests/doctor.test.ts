@@ -7,8 +7,11 @@ import {
   getLegacyLinks,
   getRepoFiles,
   getGitStatus,
+  getReviewedFilePath,
   __test,
   type Config,
+  type ReviewedEntry,
+  type ReviewedPaths,
 } from "../index";
 import { $ } from "bun";
 
@@ -32,42 +35,65 @@ async function initGitRepo(path: string): Promise<void> {
 }
 
 // --- readReviewedPaths tests ---
+// Note: These tests use the XDG path (~/.config/dot/reviewed.json)
+// so they read/write to the actual config location
 
 describe("readReviewedPaths", () => {
-  let tmpDir: string;
-  let config: Config;
+  let originalContent: string | null = null;
+  const reviewedFilePath = getReviewedFilePath();
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-read-"));
-    await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createTestConfig(tmpDir);
+    // Save existing content if any
+    try {
+      originalContent = await readFile(reviewedFilePath, "utf-8");
+    } catch {
+      originalContent = null;
+    }
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true });
+    // Restore original content
+    if (originalContent !== null) {
+      await writeFile(reviewedFilePath, originalContent);
+    } else {
+      try {
+        await rm(reviewedFilePath);
+      } catch {
+        // File doesn't exist, that's fine
+      }
+    }
   });
 
   test("returns empty object when file doesn't exist", async () => {
-    const result = await readReviewedPaths(config);
+    // Remove the file if it exists
+    try {
+      await rm(reviewedFilePath);
+    } catch {
+      // Doesn't exist, that's fine
+    }
+    const result = await readReviewedPaths();
     expect(result).toEqual({});
   });
 
-  test("parses valid JSON", async () => {
-    const data = { "/path/to/file": "2024-01-01" };
-    await writeFile(config.reviewedFile, JSON.stringify(data));
-    const result = await readReviewedPaths(config);
+  test("parses valid JSON with new schema", async () => {
+    const data: ReviewedPaths = {
+      "/path/to/file": { type: 'timed', expiresAt: '2024-06-20' },
+      "/another/path": { type: 'forever' },
+    };
+    await writeFile(reviewedFilePath, JSON.stringify(data));
+    const result = await readReviewedPaths();
     expect(result).toEqual(data);
   });
 
   test("returns empty object for corrupted JSON", async () => {
-    await writeFile(config.reviewedFile, "{ invalid json }");
-    const result = await readReviewedPaths(config);
+    await writeFile(reviewedFilePath, "{ invalid json }");
+    const result = await readReviewedPaths();
     expect(result).toEqual({});
   });
 
   test("returns empty object for empty file", async () => {
-    await writeFile(config.reviewedFile, "");
-    const result = await readReviewedPaths(config);
+    await writeFile(reviewedFilePath, "");
+    const result = await readReviewedPaths();
     expect(result).toEqual({});
   });
 });
@@ -75,59 +101,72 @@ describe("readReviewedPaths", () => {
 // --- writeReviewedPaths tests ---
 
 describe("writeReviewedPaths", () => {
-  let tmpDir: string;
-  let config: Config;
+  let originalContent: string | null = null;
+  const reviewedFilePath = getReviewedFilePath();
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-write-"));
-    await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createTestConfig(tmpDir);
+    // Save existing content if any
+    try {
+      originalContent = await readFile(reviewedFilePath, "utf-8");
+    } catch {
+      originalContent = null;
+    }
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true });
+    // Restore original content
+    if (originalContent !== null) {
+      await writeFile(reviewedFilePath, originalContent);
+    } else {
+      try {
+        await rm(reviewedFilePath);
+      } catch {
+        // File doesn't exist, that's fine
+      }
+    }
   });
 
   test("writes JSON with proper formatting", async () => {
-    const data = { "/path/to/file": "2024-01-01" };
-    await writeReviewedPaths(config, data);
+    const data: ReviewedPaths = {
+      "/path/to/file": { type: 'timed', expiresAt: '2024-06-20' },
+    };
+    await writeReviewedPaths(data);
 
-    const content = await readFile(config.reviewedFile, "utf-8");
+    const content = await readFile(reviewedFilePath, "utf-8");
     // Should have 2-space indent and trailing newline
     expect(content).toBe(JSON.stringify(data, null, 2) + "\n");
   });
 
-  test("creates file if it doesn't exist (parent dir exists)", async () => {
-    const data = { "/new/path": "2024-06-15" };
-    await writeReviewedPaths(config, data);
+  test("creates file if it doesn't exist", async () => {
+    // Remove the file first
+    try {
+      await rm(reviewedFilePath);
+    } catch {
+      // Doesn't exist, that's fine
+    }
 
-    const result = await readReviewedPaths(config);
+    const data: ReviewedPaths = {
+      "/new/path": { type: 'forever' },
+    };
+    await writeReviewedPaths(data);
+
+    const result = await readReviewedPaths();
     expect(result).toEqual(data);
   });
 
   test("overwrites existing file", async () => {
-    const oldData = { "/old": "2023-01-01" };
-    const newData = { "/new": "2024-06-15" };
+    const oldData: ReviewedPaths = {
+      "/old": { type: 'timed', expiresAt: '2023-01-01' },
+    };
+    const newData: ReviewedPaths = {
+      "/new": { type: 'forever' },
+    };
 
-    await writeReviewedPaths(config, oldData);
-    await writeReviewedPaths(config, newData);
+    await writeReviewedPaths(oldData);
+    await writeReviewedPaths(newData);
 
-    const result = await readReviewedPaths(config);
+    const result = await readReviewedPaths();
     expect(result).toEqual(newData);
-  });
-
-  test("creates parent directory if missing", async () => {
-    // Use a config where .dotfiles doesn't exist yet
-    const freshTmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-mkdir-"));
-    const freshConfig = createTestConfig(freshTmpDir);
-
-    const data = { "/path": "2024-01-01" };
-    await writeReviewedPaths(freshConfig, data);
-
-    const result = await readReviewedPaths(freshConfig);
-    expect(result).toEqual(data);
-
-    await rm(freshTmpDir, { recursive: true });
   });
 });
 
@@ -236,49 +275,78 @@ describe("getGitStatus", () => {
 // --- markAsReviewed tests ---
 
 describe("markAsReviewed", () => {
-  let tmpDir: string;
-  let config: Config;
+  let originalContent: string | null = null;
+  const reviewedFilePath = getReviewedFilePath();
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "dot-mark-reviewed-"));
-    await mkdir(`${tmpDir}/.dotfiles`, { recursive: true });
-    config = createTestConfig(tmpDir);
+    // Save existing content if any
+    try {
+      originalContent = await readFile(reviewedFilePath, "utf-8");
+    } catch {
+      originalContent = null;
+    }
+    // Clear the file for a clean test
+    try {
+      await rm(reviewedFilePath);
+    } catch {
+      // Doesn't exist, that's fine
+    }
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true });
+    // Restore original content
+    if (originalContent !== null) {
+      await writeFile(reviewedFilePath, originalContent);
+    } else {
+      try {
+        await rm(reviewedFilePath);
+      } catch {
+        // File doesn't exist, that's fine
+      }
+    }
   });
 
-  test("adds path with specified date", async () => {
-    // Use normalizePath to match what review() does
-    const path = normalizePath(config.home, "~/.config/some-app");
-    const fixedDate = "2024-06-15";
-    await markAsReviewed(config, path, fixedDate);
+  test("adds path with timed entry", async () => {
+    const path = "/test/path/some-app";
+    const entry: ReviewedEntry = { type: 'timed', expiresAt: '2024-06-20' };
+    await markAsReviewed(path, entry);
 
-    const reviewed = await readReviewedPaths(config);
-    expect(reviewed[path]).toBe(fixedDate);
+    const reviewed = await readReviewedPaths();
+    expect(reviewed[path]).toEqual(entry);
   });
 
-  test("updates existing path's date", async () => {
-    const path = normalizePath(config.home, "~/.config/some-app");
-    const newDate = "2024-06-15";
-    await writeReviewedPaths(config, { [path]: "2020-01-01" });
+  test("adds path with forever entry", async () => {
+    const path = "/test/path/permanent-app";
+    const entry: ReviewedEntry = { type: 'forever' };
+    await markAsReviewed(path, entry);
 
-    await markAsReviewed(config, path, newDate);
+    const reviewed = await readReviewedPaths();
+    expect(reviewed[path]).toEqual(entry);
+  });
 
-    const reviewed = await readReviewedPaths(config);
-    expect(reviewed[path]).toBe(newDate);
+  test("updates existing path's entry", async () => {
+    const path = "/test/path/some-app";
+    const oldEntry: ReviewedEntry = { type: 'timed', expiresAt: '2020-01-01' };
+    const newEntry: ReviewedEntry = { type: 'forever' };
+
+    await writeReviewedPaths({ [path]: oldEntry });
+    await markAsReviewed(path, newEntry);
+
+    const reviewed = await readReviewedPaths();
+    expect(reviewed[path]).toEqual(newEntry);
   });
 
   test("preserves other reviewed paths", async () => {
-    const otherPath = normalizePath(config.home, "~/.config/other-app");
-    const newPath = normalizePath(config.home, "~/.config/new-app");
-    await writeReviewedPaths(config, { [otherPath]: "2024-01-01" });
+    const otherPath = "/test/path/other-app";
+    const newPath = "/test/path/new-app";
+    const otherEntry: ReviewedEntry = { type: 'timed', expiresAt: '2024-01-01' };
+    const newEntry: ReviewedEntry = { type: 'forever' };
 
-    await markAsReviewed(config, newPath, "2024-06-15");
+    await writeReviewedPaths({ [otherPath]: otherEntry });
+    await markAsReviewed(newPath, newEntry);
 
-    const reviewed = await readReviewedPaths(config);
-    expect(reviewed[otherPath]).toBe("2024-01-01");  // Unchanged
-    expect(reviewed[newPath]).toBe("2024-06-15");    // Added
+    const reviewed = await readReviewedPaths();
+    expect(reviewed[otherPath]).toEqual(otherEntry);  // Unchanged
+    expect(reviewed[newPath]).toEqual(newEntry);      // Added
   });
 });

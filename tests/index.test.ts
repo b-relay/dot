@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   normalizePath,
-  isReviewedRecently,
-  getExpiryDate,
+  isIgnored,
+  getActiveReviewed,
+  getExpiredPaths,
+  getReviewedFilePath,
   filterBrewfile,
-  REVIEW_EXPIRY_DAYS,
+  type ReviewedEntry,
+  type ReviewedPaths,
 } from "../index";
 
 describe("normalizePath", () => {
@@ -68,57 +71,185 @@ describe("normalizePath", () => {
   });
 });
 
-describe("isReviewedRecently", () => {
+describe("isIgnored", () => {
   // Use fixed reference date to avoid timezone/midnight flakiness
   const fixedNow = new Date("2024-06-15T12:00:00Z");
 
-  test("returns true for date within expiry window", () => {
-    expect(isReviewedRecently("2024-06-15", fixedNow)).toBe(true);
+  test("returns true for forever entry", () => {
+    const entry: ReviewedEntry = { type: 'forever' };
+    expect(isIgnored(entry, fixedNow)).toBe(true);
   });
 
-  test("returns true for date 89 days ago", () => {
-    expect(isReviewedRecently("2024-03-18", fixedNow)).toBe(true); // 89 days before June 15
+  test("returns true for timed entry not yet expired", () => {
+    // Entry expires tomorrow (June 16)
+    const entry: ReviewedEntry = { type: 'timed', expiresAt: '2024-06-16' };
+    expect(isIgnored(entry, fixedNow)).toBe(true);
   });
 
-  test("returns false for date exactly at expiry", () => {
-    expect(isReviewedRecently("2024-03-17", fixedNow)).toBe(false); // 90 days before June 15
+  test("returns true for timed entry expiring far in future", () => {
+    const entry: ReviewedEntry = { type: 'timed', expiresAt: '2025-01-01' };
+    expect(isIgnored(entry, fixedNow)).toBe(true);
   });
 
-  test("returns false for date beyond expiry window", () => {
-    expect(isReviewedRecently("2024-03-16", fixedNow)).toBe(false); // 91 days before June 15
+  test("returns false for timed entry that has expired", () => {
+    // Entry expired yesterday (June 14)
+    const entry: ReviewedEntry = { type: 'timed', expiresAt: '2024-06-14' };
+    expect(isIgnored(entry, fixedNow)).toBe(false);
   });
 
-  test("returns false for very old date", () => {
-    expect(isReviewedRecently("2020-01-01", fixedNow)).toBe(false);
-  });
-});
-
-describe("getExpiryDate", () => {
-  test("returns date 90 days after review date", () => {
-    expect(getExpiryDate("2024-01-01")).toBe("2024-03-31");
+  test("returns false for timed entry expiring today (edge case)", () => {
+    // Entry expires today (June 15) - should be considered expired
+    // Because expiresAt > today is false when they're equal
+    const entry: ReviewedEntry = { type: 'timed', expiresAt: '2024-06-15' };
+    expect(isIgnored(entry, fixedNow)).toBe(false);
   });
 
-  test("handles month boundaries", () => {
-    expect(getExpiryDate("2024-11-01")).toBe("2025-01-30");
-  });
-
-  test("handles leap year", () => {
-    expect(getExpiryDate("2024-02-29")).toBe("2024-05-29");
-  });
-
-  test("calculates correctly from today", () => {
-    const today = new Date();
-    const expected = new Date(today);
-    expected.setDate(expected.getDate() + REVIEW_EXPIRY_DAYS);
-    const expectedStr = expected.toISOString().split("T")[0]!;
-    const todayStr = today.toISOString().split("T")[0]!;
-    expect(getExpiryDate(todayStr)).toBe(expectedStr);
+  test("returns false for very old expiry date", () => {
+    const entry: ReviewedEntry = { type: 'timed', expiresAt: '2020-01-01' };
+    expect(isIgnored(entry, fixedNow)).toBe(false);
   });
 });
 
-describe("REVIEW_EXPIRY_DAYS", () => {
-  test("is 90 days", () => {
-    expect(REVIEW_EXPIRY_DAYS).toBe(90);
+describe("getActiveReviewed", () => {
+  test("filters out expired entries", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+    const paths: ReviewedPaths = {
+      "/path/active": { type: 'timed', expiresAt: '2024-06-20' },
+      "/path/expired": { type: 'timed', expiresAt: '2024-06-10' },
+      "/path/forever": { type: 'forever' },
+    };
+
+    // Mock Date to use fixedNow - since getActiveReviewed creates its own Date
+    const originalDate = globalThis.Date;
+    globalThis.Date = class extends originalDate {
+      constructor() {
+        super();
+        return now;
+      }
+      static now() { return now.getTime(); }
+    } as any;
+
+    try {
+      const active = getActiveReviewed(paths);
+      expect(Object.keys(active)).toHaveLength(2);
+      expect(active["/path/active"]).toBeDefined();
+      expect(active["/path/forever"]).toBeDefined();
+      expect(active["/path/expired"]).toBeUndefined();
+    } finally {
+      globalThis.Date = originalDate;
+    }
+  });
+
+  test("returns empty object when all expired", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+    const paths: ReviewedPaths = {
+      "/path/a": { type: 'timed', expiresAt: '2024-06-01' },
+      "/path/b": { type: 'timed', expiresAt: '2024-06-10' },
+    };
+
+    const originalDate = globalThis.Date;
+    globalThis.Date = class extends originalDate {
+      constructor() {
+        super();
+        return now;
+      }
+      static now() { return now.getTime(); }
+    } as any;
+
+    try {
+      const active = getActiveReviewed(paths);
+      expect(Object.keys(active)).toHaveLength(0);
+    } finally {
+      globalThis.Date = originalDate;
+    }
+  });
+
+  test("returns all entries when none expired", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+    const paths: ReviewedPaths = {
+      "/path/a": { type: 'timed', expiresAt: '2024-06-20' },
+      "/path/b": { type: 'forever' },
+    };
+
+    const originalDate = globalThis.Date;
+    globalThis.Date = class extends originalDate {
+      constructor() {
+        super();
+        return now;
+      }
+      static now() { return now.getTime(); }
+    } as any;
+
+    try {
+      const active = getActiveReviewed(paths);
+      expect(Object.keys(active)).toHaveLength(2);
+    } finally {
+      globalThis.Date = originalDate;
+    }
+  });
+});
+
+describe("getExpiredPaths", () => {
+  test("returns only expired paths", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+    const paths: ReviewedPaths = {
+      "/path/active": { type: 'timed', expiresAt: '2024-06-20' },
+      "/path/expired1": { type: 'timed', expiresAt: '2024-06-10' },
+      "/path/expired2": { type: 'timed', expiresAt: '2024-06-01' },
+      "/path/forever": { type: 'forever' },
+    };
+
+    const originalDate = globalThis.Date;
+    globalThis.Date = class extends originalDate {
+      constructor() {
+        super();
+        return now;
+      }
+      static now() { return now.getTime(); }
+    } as any;
+
+    try {
+      const expired = getExpiredPaths(paths);
+      expect(expired).toHaveLength(2);
+      expect(expired).toContain("/path/expired1");
+      expect(expired).toContain("/path/expired2");
+      expect(expired).not.toContain("/path/active");
+      expect(expired).not.toContain("/path/forever");
+    } finally {
+      globalThis.Date = originalDate;
+    }
+  });
+
+  test("returns empty array when no expired", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+    const paths: ReviewedPaths = {
+      "/path/a": { type: 'timed', expiresAt: '2024-06-20' },
+      "/path/b": { type: 'forever' },
+    };
+
+    const originalDate = globalThis.Date;
+    globalThis.Date = class extends originalDate {
+      constructor() {
+        super();
+        return now;
+      }
+      static now() { return now.getTime(); }
+    } as any;
+
+    try {
+      const expired = getExpiredPaths(paths);
+      expect(expired).toHaveLength(0);
+    } finally {
+      globalThis.Date = originalDate;
+    }
+  });
+});
+
+describe("getReviewedFilePath", () => {
+  test("returns XDG path under ~/.config/dot", () => {
+    const path = getReviewedFilePath();
+    expect(path).toContain("/.config/dot/reviewed.json");
+    expect(path).toMatch(/^\/.*\/\.config\/dot\/reviewed\.json$/);
   });
 });
 

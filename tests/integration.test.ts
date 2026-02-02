@@ -361,7 +361,6 @@ describe("createConfig", () => {
     expect(config.home).toBe(home);
     expect(config.dotfiles).toBe(dotfiles);
     expect(config.dotconfig).toBe(`${home}/.config`);
-    expect(config.reviewedFile).toBe(`${dotfiles}/.doctor-reviewed.json`);
   });
 
   test("links are passed through from argument", () => {
