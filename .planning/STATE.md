@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 
 ## Current Position
 
-Phase: 8.1 of 11 (Symlink Path Fix) NOT STARTED
-Plan: 0 of 1 complete
-Status: Ready to plan
-Last activity: 2026-02-02 — Phase 8 complete, Phase 8.1 inserted for critical symlink bug
+Phase: 8.1 of 11 (Symlink Path Fix) COMPLETE
+Plan: 1 of 1 complete
+Status: Phase complete
+Last activity: 2026-02-02 — Completed 08.1-01-PLAN.md (symlink path fix)
 
-Progress: [████████████████████] 100% (Phase 8 complete, 16/16 plans)
+Progress: [█████████████████████] 100% (Phase 8.1 complete, 17/17 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
-- Average duration: ~8min
-- Total execution time: ~46min
+- Total plans completed: 17
+- Average duration: ~7min
+- Total execution time: ~48min
 
 **By Phase:**
 
@@ -29,13 +29,13 @@ Progress: [████████████████████] 100% (P
 |-------|-------|-------|----------|
 | 7. Init Wizard Fixes | 4/4 | ~31min | ~8min |
 | 8. Doctor-Reviewed Migration | 2/2 | ~15min | ~8min |
-| 8.1 Symlink Path Fix | 0/1 | - | - |
+| 8.1 Symlink Path Fix | 1/1 | ~2min | ~2min |
 | 9. Brewfile Sync UX & Commands | 0 | - | - |
 | 10. Enhanced Diagnostics | 0 | - | - |
 | 11. Self-Update Foundation | 0 | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 07-03 (~8min), 07-04 (~6min), 08-01 (~12min), 08-02 (~3min)
+- Last 5 plans: 07-04 (~6min), 08-01 (~12min), 08-02 (~3min), 08.1-01 (~2min)
 - Trend: Steady pace
 
 *Updated after each plan completion*
@@ -61,6 +61,7 @@ Recent decisions affecting current work:
 - v2.1: Reviewed paths at ~/.config/dot/reviewed.json — XDG pattern, machine-specific
 - v2.1: Duration options ordered 1 month, Forever, Custom, Don't ignore — Common case first
 - v2.1: Custom days >999 requires confirmation — Catches typos
+- v2.1: Import expandPath from wizard.ts (no duplication) — Single source of truth
 
 ### Pending Todos
 
@@ -79,10 +80,10 @@ None yet.
 - All ignore duration and management features complete
 - Doctor integration complete with expired notification
 
-**Phase 8.1 (Symlink Path Fix):** CRITICAL BUG
-- `installLinks()` in init.ts doesn't expand `~` to home directory
-- Creates literal `~/` folder inside dotfiles repo
-- Also affects `getConflicts()`, `getWrongTargets()`, `previewSymlinks()`
+**Phase 8.1 (Symlink Path Fix):** ALL RESOLVED
+- installLinks() now expands ~ to home directory before filesystem operations
+- getConflicts(), getWrongTargets(), previewSymlinks() also fixed
+- All 218 tests pass
 
 **Phase 11 (Self-Update Foundation):**
 - GitHub Actions workflow for binary builds needs creation (external setup)
@@ -92,6 +93,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-02
-Stopped at: Completed 08-02-PLAN.md (duration selection UI)
+Stopped at: Completed 08.1-01-PLAN.md (symlink path fix)
 Resume file: None
-Next action: Run `/gsd:plan-phase 8.1` to fix critical symlink bug
+Next action: Run `/gsd:plan-phase 9` to plan Brewfile Sync UX & Commands
