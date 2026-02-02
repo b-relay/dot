@@ -25,14 +25,19 @@ import { browseForPath, UserCancelledError } from "./src/wizard";
 import * as p from '@clack/prompts';
 
 const VERSION = "0.1.0";
-const REVIEW_EXPIRY_DAYS = 90;
+
+// Discriminated union for reviewed path entries
+type ReviewedEntry =
+  | { type: 'timed'; expiresAt: string }  // YYYY-MM-DD format
+  | { type: 'forever' };
+
+type ReviewedPaths = Record<string, ReviewedEntry>;
 
 // Config type for internal use (resolved paths)
 type Config = {
   dotfiles: string;
   dotconfig: string;
   home: string;
-  reviewedFile: string;
   links: Record<string, string>;
 };
 
@@ -218,9 +223,20 @@ function createConfig(dotfilesPath: string, links: LinkMap, home?: string): Conf
     dotfiles: dotfilesPath,
     dotconfig,
     home: resolvedHome,
-    reviewedFile: `${dotfilesPath}/.doctor-reviewed.json`,
     links: resolvedLinks,
   };
+}
+
+// --- Reviewed paths helpers ---
+
+/**
+ * Get the path to the reviewed paths file.
+ * Uses XDG Base Directory pattern: ~/.config/dot/reviewed.json
+ */
+function getReviewedFilePath(): string {
+  const home = Bun.env.HOME;
+  if (!home) throw new Error("HOME environment variable not set");
+  return `${home}/.config/dot/reviewed.json`;
 }
 
 // --- Core symlink helpers ---
@@ -660,10 +676,9 @@ function printArchitectureStatus(architecture: 'arm64' | 'x86_64', issues: Hardc
 
 // --- End architecture detection helpers ---
 
-type ReviewedPaths = Record<string, string>; // path -> date reviewed
-
-async function readReviewedPaths(config: Config): Promise<ReviewedPaths> {
-  const file = Bun.file(config.reviewedFile);
+async function readReviewedPaths(): Promise<ReviewedPaths> {
+  const filePath = getReviewedFilePath();
+  const file = Bun.file(filePath);
   if (await file.exists()) {
     try {
       return await file.json();
@@ -675,19 +690,52 @@ async function readReviewedPaths(config: Config): Promise<ReviewedPaths> {
   return {};
 }
 
-async function writeReviewedPaths(
-  config: Config,
-  paths: ReviewedPaths,
-): Promise<void> {
+async function writeReviewedPaths(paths: ReviewedPaths): Promise<void> {
+  const filePath = getReviewedFilePath();
   // Ensure parent directory exists
-  await mkdir(dirname(config.reviewedFile), { recursive: true });
-  await Bun.write(config.reviewedFile, JSON.stringify(paths, null, 2) + "\n");
+  await mkdir(dirname(filePath), { recursive: true });
+  await Bun.write(filePath, JSON.stringify(paths, null, 2) + "\n");
 }
 
-function isReviewedRecently(reviewDate: string, now: Date = new Date()): boolean {
-  const reviewed = new Date(reviewDate);
-  const diffDays = (now.getTime() - reviewed.getTime()) / (1000 * 60 * 60 * 24);
-  return diffDays < REVIEW_EXPIRY_DAYS;
+/**
+ * Check if a reviewed entry is currently ignored (not expired).
+ * Forever entries are always ignored. Timed entries are ignored until their expiry date.
+ */
+function isIgnored(entry: ReviewedEntry, now: Date = new Date()): boolean {
+  if (entry.type === 'forever') {
+    return true;
+  }
+  // Compare date strings (YYYY-MM-DD format is lexicographically sortable)
+  const today = now.toISOString().split('T')[0]!;
+  return entry.expiresAt > today;
+}
+
+/**
+ * Filter reviewed paths to only include active (non-expired) entries.
+ */
+function getActiveReviewed(paths: ReviewedPaths): ReviewedPaths {
+  const now = new Date();
+  const active: ReviewedPaths = {};
+  for (const [path, entry] of Object.entries(paths)) {
+    if (isIgnored(entry, now)) {
+      active[path] = entry;
+    }
+  }
+  return active;
+}
+
+/**
+ * Get paths that have expired (came back from review).
+ */
+function getExpiredPaths(paths: ReviewedPaths): string[] {
+  const now = new Date();
+  const expired: string[] = [];
+  for (const [path, entry] of Object.entries(paths)) {
+    if (!isIgnored(entry, now)) {
+      expired.push(path);
+    }
+  }
+  return expired;
 }
 
 function normalizePath(home: string, inputPath: string): string {
@@ -1109,15 +1157,16 @@ type Dotfile = {
   symlinkTarget?: string;
 };
 
-// Core logic for marking a path as reviewed, with injectable date for testing
+/**
+ * Mark a path as reviewed with the given entry type.
+ */
 async function markAsReviewed(
-  config: Config,
   normalizedPath: string,
-  today: string = new Date().toISOString().split("T")[0]!,
+  entry: ReviewedEntry,
 ): Promise<void> {
-  const reviewed = await readReviewedPaths(config);
-  reviewed[normalizedPath] = today;
-  await writeReviewedPaths(config, reviewed);
+  const reviewed = await readReviewedPaths();
+  reviewed[normalizedPath] = entry;
+  await writeReviewedPaths(reviewed);
 }
 
 type DoctorIgnoreOptions = {
@@ -1149,17 +1198,18 @@ async function doctorIgnore(config: Config, options: DoctorIgnoreOptions) {
     }
   }
 
-  const today = new Date().toISOString().split("T")[0]!;
-  await markAsReviewed(config, targetPath, today);
+  // Create a timed entry with 30-day expiry (Plan 02 will add duration selection)
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + 30);
+  const expiresAt = expiryDate.toISOString().split('T')[0]!;
+  const entry: ReviewedEntry = {
+    type: 'timed',
+    expiresAt,
+  };
+  await markAsReviewed(targetPath, entry);
 
   p.log.success(`Ignored: ${targetPath}`);
-  p.log.info(`Excluded from doctor until ${getExpiryDate(today)}`);
-}
-
-function getExpiryDate(reviewDate: string): string {
-  const date = new Date(reviewDate);
-  date.setDate(date.getDate() + REVIEW_EXPIRY_DAYS);
-  return date.toISOString().split("T")[0]!;
+  p.log.info(`Excluded from doctor until ${expiresAt}`);
 }
 
 async function doctor(config: Config, dotConfig: DotConfig) {
@@ -1259,21 +1309,14 @@ async function doctor(config: Config, dotConfig: DotConfig) {
     }
   }
 
-  // Load reviewed paths
-  const reviewedPaths = await readReviewedPaths(config);
-  const activeReviewed: Record<string, string> = {};
-  const expiredReviewed: string[] = [];
+  // Load reviewed paths and filter expired entries
+  const reviewedPaths = await readReviewedPaths();
+  const activeReviewed = getActiveReviewed(reviewedPaths);
+  const expiredPaths = getExpiredPaths(reviewedPaths);
 
-  for (const [path, date] of Object.entries(reviewedPaths)) {
-    if (isReviewedRecently(date)) {
-      activeReviewed[path] = date;
-    } else {
-      expiredReviewed.push(path);
-    }
-  }
-
-  if (expiredReviewed.length > 0) {
-    await writeReviewedPaths(config, activeReviewed);
+  // Clean up expired entries from storage
+  if (expiredPaths.length > 0) {
+    await writeReviewedPaths(activeReviewed);
   }
 
   // Gather state with spinner
@@ -1538,6 +1581,10 @@ export const __test = {
   readReviewedPaths,
   writeReviewedPaths,
   markAsReviewed,
+  isIgnored,
+  getActiveReviewed,
+  getExpiredPaths,
+  getReviewedFilePath,
 };
 
 // Re-export config and state modules
@@ -1563,8 +1610,8 @@ export {
   type BrewfileSyncStatus,
   type HardcodedPathIssue,
   type GlobalOptions,
-  // Constants
-  REVIEW_EXPIRY_DAYS,
+  type ReviewedEntry,
+  type ReviewedPaths,
   // Functions
   createConfig,
   getLegacyLinks,
@@ -1578,8 +1625,10 @@ export {
   getRepoFiles,
   getGitStatus,
   normalizePath,
-  isReviewedRecently,
-  getExpiryDate,
+  isIgnored,
+  getActiveReviewed,
+  getExpiredPaths,
+  getReviewedFilePath,
   isToolInstalled,
   checkDependencies,
   parseBrewfile,
