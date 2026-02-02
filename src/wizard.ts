@@ -1390,8 +1390,9 @@ export async function previewSymlinks(
           const linkTarget = await readlink(expandedTarget);
           const resolvedTarget = resolve(dirname(expandedTarget), linkTarget);
 
-          // Compare resolved target with expected source
-          if (resolvedTarget === source) {
+          // Compare resolved target with expected source (both absolute)
+          const absoluteSource = resolve(dotfilesPath, source);
+          if (resolvedTarget === absoluteSource) {
             status = 'already-linked';
             groups.alreadyLinked.push({ source, target });
           } else {
