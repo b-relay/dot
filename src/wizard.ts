@@ -384,22 +384,73 @@ export function printTree(items: DetectedDotfile[], indent = ''): void {
 }
 
 /**
- * Print nested directory contents in tree format (recursive).
+ * Count how many items would be displayed at a given depth.
+ * Used to determine optimal tree depth.
+ */
+async function countTreeItems(
+  dirPath: string,
+  maxDepth: number,
+  currentDepth = 0
+): Promise<number> {
+  if (currentDepth >= maxDepth) return 0;
+
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    const filtered = entries.filter(e => !e.name.startsWith('.'));
+    let count = filtered.length;
+
+    for (const entry of filtered) {
+      if (entry.isDirectory() && !FILTERED_DIRS.has(entry.name)) {
+        const subPath = resolve(dirPath, entry.name);
+        count += await countTreeItems(subPath, maxDepth, currentDepth + 1);
+      }
+    }
+
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Find optimal depth that keeps total items under threshold.
+ */
+async function findOptimalDepth(
+  dirPath: string,
+  maxItems = 25,
+  maxDepth = 5
+): Promise<number> {
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const count = await countTreeItems(dirPath, depth);
+    if (count > maxItems) {
+      return Math.max(1, depth - 1);
+    }
+  }
+  return maxDepth;
+}
+
+/**
+ * Print nested directory contents in tree format.
+ * Automatically determines depth to keep total items under threshold.
  */
 export async function printTreeRecursive(
   dirPath: string,
   indent = '',
-  maxDepth = 3,
+  maxDepth?: number,
   currentDepth = 0
 ): Promise<void> {
+  // On first call, determine optimal depth if not specified
+  if (currentDepth === 0 && maxDepth === undefined) {
+    maxDepth = await findOptimalDepth(dirPath);
+  }
+  maxDepth = maxDepth ?? 3;
+
   if (currentDepth >= maxDepth) {
-    console.log(`${indent}└── ...`);
     return;
   }
 
   try {
     const entries = await readdir(dirPath, { withFileTypes: true });
-    // Filter hidden files only
     const filtered = entries.filter(e => !e.name.startsWith('.'));
 
     for (let i = 0; i < filtered.length; i++) {
@@ -412,7 +463,8 @@ export async function printTreeRecursive(
         const subPath = resolve(dirPath, entry.name);
         const subEntries = await readdir(subPath).catch(() => []);
         const count = subEntries.filter(e => !e.startsWith('.')).length;
-        console.log(`${indent}${prefix}${entry.name}/ (${count} items)`);
+        const hasMore = currentDepth + 1 >= maxDepth && count > 0;
+        console.log(`${indent}${prefix}${entry.name}/${hasMore ? ` (${count} items)` : ''}`);
         // Don't recurse into filtered directories (tmp, node_modules, etc.)
         if (!FILTERED_DIRS.has(entry.name)) {
           await printTreeRecursive(subPath, childIndent, maxDepth, currentDepth + 1);

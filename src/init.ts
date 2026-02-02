@@ -505,9 +505,9 @@ async function initImpl(options: InitOptions): Promise<void> {
           return [df]; // Empty folder
         }
 
-        // Show tree view of contents
+        // Show tree view of contents (dynamic depth based on item count)
         console.log(`\n${df.name}/`);
-        await printTreeRecursive(df.path, '', 3);
+        await printTreeRecursive(df.path);
         console.log('');
 
         const action = await p.select({
