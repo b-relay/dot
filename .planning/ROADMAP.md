@@ -81,10 +81,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 4 plans
 
 Plans:
-- [ ] 07-01-PLAN.md — Fix conflict detection bug (INIT-04)
-- [ ] 07-02-PLAN.md — Add directory filtering, file annotations, and config patterns (INIT-01, INIT-03)
-- [ ] 07-03-PLAN.md — Add --dry-run flag with colored preview (INIT-02)
-- [ ] 07-04-PLAN.md — Implement conflict resolution flow (backup/diff/merge)
+- [x] 07-01-PLAN.md — Fix conflict detection bug (INIT-04)
+- [x] 07-02-PLAN.md — Add directory filtering, file annotations, and config patterns (INIT-01, INIT-03)
+- [x] 07-03-PLAN.md — Add --dry-run flag with colored preview (INIT-02)
+- [x] 07-04-PLAN.md — Implement conflict resolution flow (backup/diff/merge)
 
 ### Phase 8: Doctor-Reviewed Migration
 **Goal**: Reviewed paths stored in machine-specific location with flexible ignore options
@@ -158,7 +158,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10 → 11
 | 4. Path Hardcoding Detection | v1.1 | N/A | Complete | 2025 |
 | 5. External Config | v2.0 | N/A | Complete | 2026-02-01 |
 | 6. Init Wizard | v2.0 | N/A | Complete | 2026-02-01 |
-| 7. Init Wizard Fixes | v2.1 | 0/4 | Ready | - |
+| 7. Init Wizard Fixes | v2.1 | 4/4 | Complete | 2026-02-01 |
 | 8. Doctor-Reviewed Migration | v2.1 | 0/TBD | Not started | - |
 | 9. Brewfile Sync UX | v2.1 | 0/TBD | Not started | - |
 | 10. Enhanced Diagnostics | v2.1 | 0/TBD | Not started | - |

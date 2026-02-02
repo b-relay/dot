@@ -26,10 +26,10 @@
 - [ ] **REVIEW-03**: User can choose "forever" to permanently ignore a path
 
 ### Init Wizard Fixes
-- [ ] **INIT-01**: Directory browser skips `/tmp` folders
-- [ ] **INIT-02**: Add `--dry-run` flag to test init without making changes
-- [ ] **INIT-03**: Non-valuable dotfiles (caches, temp) are annotated with notes
-- [ ] **INIT-04**: Investigate and fix false conflict detection bug
+- [x] **INIT-01**: Directory browser skips `/tmp` folders
+- [x] **INIT-02**: Add `--dry-run` flag to test init without making changes
+- [x] **INIT-03**: Non-valuable dotfiles (caches, temp) are annotated with notes
+- [x] **INIT-04**: Investigate and fix false conflict detection bug
 
 ## Future Requirements
 
@@ -48,10 +48,10 @@
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| INIT-01 | Phase 7 | Pending |
-| INIT-02 | Phase 7 | Pending |
-| INIT-03 | Phase 7 | Pending |
-| INIT-04 | Phase 7 | Pending |
+| INIT-01 | Phase 7 | Complete |
+| INIT-02 | Phase 7 | Complete |
+| INIT-03 | Phase 7 | Complete |
+| INIT-04 | Phase 7 | Complete |
 | REVIEW-01 | Phase 8 | Pending |
 | REVIEW-02 | Phase 8 | Pending |
 | REVIEW-03 | Phase 8 | Pending |
