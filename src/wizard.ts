@@ -399,6 +399,7 @@ export async function printTreeRecursive(
 
   try {
     const entries = await readdir(dirPath, { withFileTypes: true });
+    // Filter hidden files only
     const filtered = entries.filter(e => !e.name.startsWith('.'));
 
     for (let i = 0; i < filtered.length; i++) {
@@ -412,7 +413,10 @@ export async function printTreeRecursive(
         const subEntries = await readdir(subPath).catch(() => []);
         const count = subEntries.filter(e => !e.startsWith('.')).length;
         console.log(`${indent}${prefix}${entry.name}/ (${count} items)`);
-        await printTreeRecursive(subPath, childIndent, maxDepth, currentDepth + 1);
+        // Don't recurse into filtered directories (tmp, node_modules, etc.)
+        if (!FILTERED_DIRS.has(entry.name)) {
+          await printTreeRecursive(subPath, childIndent, maxDepth, currentDepth + 1);
+        }
       } else {
         console.log(`${indent}${prefix}${entry.name}`);
       }
