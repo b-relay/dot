@@ -1391,6 +1391,27 @@ async function doctorIgnore(config: Config, options: DoctorIgnoreOptions) {
 async function doctor(config: Config, dotConfig: DotConfig) {
   p.intro('dot doctor');
 
+  // Load reviewed paths and check for expired (show notification at top)
+  const allReviewedPaths = await readReviewedPaths();
+  const expiredPaths = getExpiredPaths(allReviewedPaths);
+  const activeReviewed = getActiveReviewed(allReviewedPaths);
+
+  // Show expired paths notification at top if any came back
+  if (expiredPaths.length > 0) {
+    const pathWord = expiredPaths.length === 1 ? 'path' : 'paths';
+    p.log.info(`${expiredPaths.length} ${pathWord} came back from review`);
+    for (const path of expiredPaths.slice(0, 3)) {
+      console.log(`  ${path}`);
+    }
+    if (expiredPaths.length > 3) {
+      console.log(`  ... and ${expiredPaths.length - 3} more`);
+    }
+    console.log('');  // Blank line before rest of output
+
+    // Clean up expired entries from file
+    await writeReviewedPaths(activeReviewed);
+  }
+
   const s = p.spinner();
 
   // Check dependencies if configured
@@ -1485,16 +1506,6 @@ async function doctor(config: Config, dotConfig: DotConfig) {
     }
   }
 
-  // Load reviewed paths and filter expired entries
-  const reviewedPaths = await readReviewedPaths();
-  const activeReviewed = getActiveReviewed(reviewedPaths);
-  const expiredPaths = getExpiredPaths(reviewedPaths);
-
-  // Clean up expired entries from storage
-  if (expiredPaths.length > 0) {
-    await writeReviewedPaths(activeReviewed);
-  }
-
   // Gather state with spinner
   s.start('Gathering system state...');
   const [symlinkStatus, repoFiles, dotfiles, gitStatus] = await Promise.all([
@@ -1525,6 +1536,8 @@ async function doctor(config: Config, dotConfig: DotConfig) {
   const prompt = `You are analyzing a dotfiles repository setup. Review the data below and provide a concise report of issues and recommendations.
 
 This Mac is running on ${architecture} architecture. Homebrew is at ${homebrewPath}.
+
+IMPORTANT: Output plain text only, no markdown formatting. This will be displayed directly in a terminal.
 
 Focus on:
 1. Symlink problems (broken, missing, wrong-target, or not-symlink status)
