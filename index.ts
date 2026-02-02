@@ -738,6 +738,118 @@ function getExpiredPaths(paths: ReviewedPaths): string[] {
   return expired;
 }
 
+// --- Ignore duration helpers ---
+
+/**
+ * Calculate expiry date from number of days in the future.
+ * Returns YYYY-MM-DD format string.
+ */
+function calculateExpiryDate(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0]!;
+}
+
+/**
+ * Format a YYYY-MM-DD date string for display (e.g., "Mar 15").
+ */
+function formatDateShort(dateStr: string): string {
+  const date = new Date(dateStr + 'T00:00:00');
+  const month = date.toLocaleString('en-US', { month: 'short' });
+  const day = date.getDate();
+  return `${month} ${day}`;
+}
+
+type IgnoreChoice =
+  | { type: '1-month' }
+  | { type: 'forever' }
+  | { type: 'custom'; days: number }
+  | { type: 'skip' };
+
+/**
+ * Prompt user to select ignore duration for a path.
+ */
+async function promptIgnoreDuration(path: string): Promise<IgnoreChoice> {
+  const oneMonthExpiry = calculateExpiryDate(30);
+
+  const choice = await p.select({
+    message: `Ignore ${path}?`,
+    options: [
+      { value: '1-month', label: '1 month', hint: `until ${formatDateShort(oneMonthExpiry)}` },
+      { value: 'forever', label: 'Forever', hint: 'permanent' },
+      { value: 'custom', label: 'Custom', hint: 'enter days' },
+      { value: 'skip', label: "Don't ignore" },
+    ],
+  });
+
+  if (p.isCancel(choice)) {
+    return { type: 'skip' };
+  }
+
+  if (choice === 'custom') {
+    const daysInput = await p.text({
+      message: 'Number of days:',
+      validate: (value) => {
+        if (!value) return 'Enter a positive number';
+        const num = parseInt(value, 10);
+        if (isNaN(num) || num <= 0) return 'Enter a positive number';
+        return undefined;
+      },
+    });
+
+    if (p.isCancel(daysInput)) {
+      return { type: 'skip' };
+    }
+
+    const days = parseInt(daysInput as string, 10);
+
+    // Confirm if > 999 days (catches typos)
+    if (days > 999) {
+      const years = Math.round(days / 365);
+      const confirm = await p.confirm({
+        message: `Ignore for ${days} days (~${years} years)?`,
+        initialValue: false,
+      });
+
+      if (p.isCancel(confirm) || !confirm) {
+        return { type: 'skip' };
+      }
+    }
+
+    return { type: 'custom', days };
+  }
+
+  return { type: choice as '1-month' | 'forever' | 'skip' };
+}
+
+/**
+ * Convert an IgnoreChoice to a ReviewedEntry (or null if skipped).
+ */
+function choiceToEntry(choice: IgnoreChoice): ReviewedEntry | null {
+  switch (choice.type) {
+    case '1-month':
+      return { type: 'timed', expiresAt: calculateExpiryDate(30) };
+    case 'forever':
+      return { type: 'forever' };
+    case 'custom':
+      return { type: 'timed', expiresAt: calculateExpiryDate(choice.days) };
+    case 'skip':
+      return null;
+  }
+}
+
+/**
+ * Format a confirmation message for an ignore entry.
+ */
+function formatIgnoreConfirmation(entry: ReviewedEntry): string {
+  if (entry.type === 'forever') {
+    return 'Ignored permanently';
+  }
+  return `Ignored until ${formatDateShort(entry.expiresAt)}`;
+}
+
+// --- End ignore duration helpers ---
+
 function normalizePath(home: string, inputPath: string): string {
   // Expand ~ and ~/ to home
   if (inputPath === "~") {
@@ -1198,18 +1310,17 @@ async function doctorIgnore(config: Config, options: DoctorIgnoreOptions) {
     }
   }
 
-  // Create a timed entry with 30-day expiry (Plan 02 will add duration selection)
-  const expiryDate = new Date();
-  expiryDate.setDate(expiryDate.getDate() + 30);
-  const expiresAt = expiryDate.toISOString().split('T')[0]!;
-  const entry: ReviewedEntry = {
-    type: 'timed',
-    expiresAt,
-  };
-  await markAsReviewed(targetPath, entry);
+  // Prompt for duration
+  const choice = await promptIgnoreDuration(targetPath);
+  const entry = choiceToEntry(choice);
 
-  p.log.success(`Ignored: ${targetPath}`);
-  p.log.info(`Excluded from doctor until ${expiresAt}`);
+  if (!entry) {
+    // User chose "Don't ignore" - silent exit per CONTEXT.md
+    return;
+  }
+
+  await markAsReviewed(targetPath, entry);
+  p.log.success(formatIgnoreConfirmation(entry));
 }
 
 async function doctor(config: Config, dotConfig: DotConfig) {
