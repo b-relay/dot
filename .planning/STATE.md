@@ -71,7 +71,7 @@ None yet.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 001 | Update tests for phase 8.1 changes | 2026-02-02 | f6112d4 | [001-update-tests-for-phase-8-1-changes](./quick/001-update-tests-for-phase-8-1-changes/) |
+| 001 | Update tests for phase 1-8 changes | 2026-02-02 | 3dd1565 | [001-update-tests-for-phase-8-1-changes](./quick/001-update-tests-for-phase-8-1-changes/) |
 
 ### Blockers/Concerns
 
@@ -89,7 +89,7 @@ None yet.
 **Phase 8.1 (Symlink Path Fix):** ALL RESOLVED
 - installLinks() now expands ~ to home directory before filesystem operations
 - getConflicts(), getWrongTargets(), previewSymlinks() also fixed
-- All 225 tests pass (7 new tests added in quick-001)
+- All 252 tests pass (34 new tests added in quick-001)
 
 **Phase 11 (Self-Update Foundation):**
 - GitHub Actions workflow for binary builds needs creation (external setup)
