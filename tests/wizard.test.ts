@@ -3,8 +3,169 @@ import { mkdir, writeFile, symlink, rm } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { previewSymlinks, expandPath } from "../src/wizard";
+import { previewSymlinks, expandPath, isLowValueFile, getLowValueAnnotation, buildLinksFromDotfiles } from "../src/wizard";
 import type { LinkMap } from "../src/types";
+import type { DetectedDotfile } from "../src/wizard";
+
+describe("isLowValueFile", () => {
+  test("returns true for system files", () => {
+    expect(isLowValueFile(".DS_Store")).toBe(true);
+    expect(isLowValueFile("Thumbs.db")).toBe(true);
+    expect(isLowValueFile("desktop.ini")).toBe(true);
+    expect(isLowValueFile(".localized")).toBe(true);
+    expect(isLowValueFile(".CFUserTextEncoding")).toBe(true);
+  });
+
+  test("returns true for history files", () => {
+    expect(isLowValueFile(".zsh_history")).toBe(true);
+    expect(isLowValueFile(".bash_history")).toBe(true);
+    expect(isLowValueFile(".node_repl_history")).toBe(true);
+    expect(isLowValueFile(".python_history")).toBe(true);
+  });
+
+  test("returns true for cache/temp files", () => {
+    expect(isLowValueFile(".cache")).toBe(true);
+    expect(isLowValueFile(".tmp")).toBe(true);
+  });
+
+  test("returns true for log/backup files by suffix", () => {
+    expect(isLowValueFile("debug.log")).toBe(true);
+    expect(isLowValueFile("file.bak")).toBe(true);
+    expect(isLowValueFile("file.swp")).toBe(true);
+    expect(isLowValueFile("file.swo")).toBe(true);
+  });
+
+  test("returns false for valuable dotfiles", () => {
+    expect(isLowValueFile(".zshrc")).toBe(false);
+    expect(isLowValueFile(".gitconfig")).toBe(false);
+    expect(isLowValueFile(".vimrc")).toBe(false);
+    expect(isLowValueFile("starship.toml")).toBe(false);
+  });
+
+  test("respects custom highValue overrides", () => {
+    // Even though .zsh_history is in default low-value list,
+    // custom highValue can override it
+    expect(isLowValueFile(".zsh_history", { highValue: [".zsh_history"] })).toBe(false);
+  });
+
+  test("respects custom lowValue patterns", () => {
+    // Add custom pattern to low-value list
+    expect(isLowValueFile(".my-custom-cache")).toBe(false);
+    expect(isLowValueFile(".my-custom-cache", { lowValue: [".my-custom-cache"] })).toBe(true);
+  });
+});
+
+describe("getLowValueAnnotation", () => {
+  test("annotates history files", () => {
+    expect(getLowValueAnnotation(".zsh_history")).toBe("history file");
+    expect(getLowValueAnnotation(".bash_history")).toBe("history file");
+  });
+
+  test("annotates cache files", () => {
+    expect(getLowValueAnnotation(".cache")).toBe("cache");
+    expect(getLowValueAnnotation(".zcompcache")).toBe("cache");
+  });
+
+  test("annotates system files", () => {
+    expect(getLowValueAnnotation(".DS_Store")).toBe("system file");
+    expect(getLowValueAnnotation("Thumbs.db")).toBe("system file");
+    expect(getLowValueAnnotation(".localized")).toBe("system file");
+  });
+
+  test("annotates log files", () => {
+    expect(getLowValueAnnotation("debug.log")).toBe("log file");
+  });
+
+  test("annotates backup/swap files", () => {
+    expect(getLowValueAnnotation("file.bak")).toBe("backup/swap file");
+    expect(getLowValueAnnotation("file.swp")).toBe("backup/swap file");
+  });
+
+  test("annotates session data", () => {
+    expect(getLowValueAnnotation(".session")).toBe("session data");
+  });
+
+  test("returns generic annotation for unknown low-value files", () => {
+    expect(getLowValueAnnotation(".unknown")).toBe("temp/cache");
+  });
+});
+
+describe("buildLinksFromDotfiles", () => {
+  const home = process.env.HOME ?? "";
+  const dotfilesPath = `${home}/.dotfiles`;
+
+  test("builds links with relative source and tilde target", () => {
+    const dotfiles: DetectedDotfile[] = [
+      {
+        path: `${home}/.zshrc`,
+        name: ".zshrc",
+        status: "available",
+        sourcePath: `${dotfilesPath}/zsh/zshrc`,
+        suggested: "zsh/zshrc",
+      },
+    ];
+
+    const links = buildLinksFromDotfiles(dotfiles, dotfilesPath);
+
+    expect(links["zsh/zshrc"]).toBe("~/.zshrc");
+  });
+
+  test("builds links for nested config paths", () => {
+    const dotfiles: DetectedDotfile[] = [
+      {
+        path: `${home}/.config/starship.toml`,
+        name: "starship.toml",
+        status: "available",
+        sourcePath: `${dotfilesPath}/zsh/starship.toml`,
+        suggested: "zsh/starship.toml",
+      },
+    ];
+
+    const links = buildLinksFromDotfiles(dotfiles, dotfilesPath);
+
+    expect(links["zsh/starship.toml"]).toBe("~/.config/starship.toml");
+  });
+
+  test("uses suggested path when sourcePath is missing", () => {
+    const dotfiles: DetectedDotfile[] = [
+      {
+        path: `${home}/.gitconfig`,
+        name: ".gitconfig",
+        status: "available",
+        suggested: "git/config",
+      },
+    ];
+
+    const links = buildLinksFromDotfiles(dotfiles, dotfilesPath);
+
+    expect(links["git/config"]).toBe("~/.gitconfig");
+  });
+
+  test("handles multiple dotfiles", () => {
+    const dotfiles: DetectedDotfile[] = [
+      {
+        path: `${home}/.zshrc`,
+        name: ".zshrc",
+        status: "available",
+        sourcePath: `${dotfilesPath}/zsh/zshrc`,
+        suggested: "zsh/zshrc",
+      },
+      {
+        path: `${home}/.gitconfig`,
+        name: ".gitconfig",
+        status: "available",
+        sourcePath: `${dotfilesPath}/git/.gitconfig`,
+        suggested: "git/.gitconfig",
+      },
+    ];
+
+    const links = buildLinksFromDotfiles(dotfiles, dotfilesPath);
+
+    expect(Object.keys(links)).toHaveLength(2);
+    expect(links["zsh/zshrc"]).toBe("~/.zshrc");
+    expect(links["git/.gitconfig"]).toBe("~/.gitconfig");
+  });
+});
 
 describe("expandPath", () => {
   test("expands ~ to home directory", () => {
