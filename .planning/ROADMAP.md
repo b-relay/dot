@@ -113,7 +113,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 08.1-01-PLAN.md — Fix tilde expansion in init symlink creation
+- [x] 08.1-01-PLAN.md — Fix tilde expansion in init symlink creation
 
 ### Phase 9: Brewfile Sync UX & Command Restructure
 **Goal**: Brewfile sync adapts to installed packages, users control exclusions, and commands are restructured for clarity
@@ -180,7 +180,7 @@ Phases execute in numeric order: 7 → 8 → 8.1 → 9 → 10 → 11
 | 6. Init Wizard | v2.0 | N/A | Complete | 2026-02-01 |
 | 7. Init Wizard Fixes | v2.1 | 4/4 | Complete | 2026-02-01 |
 | 8. Doctor-Reviewed Migration | v2.1 | 2/2 | Complete | 2026-02-02 |
-| 8.1 Symlink Path Fix | v2.1 | 0/1 | Not started | - |
+| 8.1 Symlink Path Fix | v2.1 | 1/1 | Complete | 2026-02-02 |
 | 9. Brewfile Sync UX & Commands | v2.1 | 0/TBD | Not started | - |
 | 10. Enhanced Diagnostics | v2.1 | 0/TBD | Not started | - |
 | 11. Self-Update Foundation | v2.1 | 0/TBD | Not started | - |

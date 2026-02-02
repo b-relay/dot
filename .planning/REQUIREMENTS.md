@@ -32,7 +32,7 @@
 - [x] **INIT-02**: Add `--dry-run` flag to test init without making changes
 - [x] **INIT-03**: Non-valuable dotfiles (caches, temp) are annotated with notes
 - [x] **INIT-04**: Investigate and fix false conflict detection bug
-- [ ] **INIT-05**: Fix symlink path expansion - `~` must expand to home directory in init
+- [x] **INIT-05**: Fix symlink path expansion - `~` must expand to home directory in init
 
 ### Command Structure
 - [ ] **CMD-01**: `dot doctor --ignore [path]` replaces `dot ignore [path]`
@@ -61,7 +61,7 @@
 | INIT-02 | Phase 7 | Complete |
 | INIT-03 | Phase 7 | Complete |
 | INIT-04 | Phase 7 | Complete |
-| INIT-05 | Phase 8.1 | Pending |
+| INIT-05 | Phase 8.1 | Complete |
 | REVIEW-01 | Phase 8 | Complete |
 | REVIEW-02 | Phase 8 | Complete |
 | REVIEW-03 | Phase 8 | Complete |
