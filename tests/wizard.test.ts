@@ -102,6 +102,7 @@ describe("buildLinksFromDotfiles", () => {
         status: "available",
         sourcePath: `${dotfilesPath}/zsh/zshrc`,
         suggested: "zsh/zshrc",
+        isDirectory: false,
       },
     ];
 
@@ -118,6 +119,7 @@ describe("buildLinksFromDotfiles", () => {
         status: "available",
         sourcePath: `${dotfilesPath}/zsh/starship.toml`,
         suggested: "zsh/starship.toml",
+        isDirectory: false,
       },
     ];
 
@@ -133,6 +135,7 @@ describe("buildLinksFromDotfiles", () => {
         name: ".gitconfig",
         status: "available",
         suggested: "git/config",
+        isDirectory: false,
       },
     ];
 
@@ -149,6 +152,7 @@ describe("buildLinksFromDotfiles", () => {
         status: "available",
         sourcePath: `${dotfilesPath}/zsh/zshrc`,
         suggested: "zsh/zshrc",
+        isDirectory: false,
       },
       {
         path: `${home}/.gitconfig`,
@@ -156,6 +160,7 @@ describe("buildLinksFromDotfiles", () => {
         status: "available",
         sourcePath: `${dotfilesPath}/git/.gitconfig`,
         suggested: "git/.gitconfig",
+        isDirectory: false,
       },
     ];
 

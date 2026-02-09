@@ -1367,8 +1367,12 @@ export async function previewSymlinks(
   for (const [source, target] of Object.entries(links)) {
     const expandedTarget = expandPath(target);
 
+    // Source paths in config are typically stored relative to the dotfiles repo.
+    // Resolve against dotfilesPath so preview results are independent of cwd.
+    const absoluteSource = source.startsWith('/') ? source : resolve(dotfilesPath, source);
+
     // Check if source exists in dotfiles
-    const sourceExists = await pathExists(source);
+    const sourceExists = await pathExists(absoluteSource);
 
     // Check if target already exists
     const targetExists = await pathExists(expandedTarget);
@@ -1382,22 +1386,21 @@ export async function previewSymlinks(
     } else if (!targetExists) {
       status = 'new';
       groups.new.push({ source, target });
-    } else {
-      // Target exists - check if it's a symlink and where it points
-      try {
-        const targetStat = await lstat(expandedTarget);
-        if (targetStat.isSymbolicLink()) {
-          // Read where the symlink actually points
-          const linkTarget = await readlink(expandedTarget);
-          const resolvedTarget = resolve(dirname(expandedTarget), linkTarget);
+      } else {
+        // Target exists - check if it's a symlink and where it points
+        try {
+          const targetStat = await lstat(expandedTarget);
+          if (targetStat.isSymbolicLink()) {
+            // Read where the symlink actually points
+            const linkTarget = await readlink(expandedTarget);
+            const resolvedTarget = resolve(dirname(expandedTarget), linkTarget);
 
-          // Compare resolved target with expected source (both absolute)
-          const absoluteSource = resolve(dotfilesPath, source);
-          if (resolvedTarget === absoluteSource) {
-            status = 'already-linked';
-            groups.alreadyLinked.push({ source, target });
-          } else {
-            status = 'wrong-target';
+            // Compare resolved target with expected source (both absolute)
+            if (resolvedTarget === absoluteSource) {
+              status = 'already-linked';
+              groups.alreadyLinked.push({ source, target });
+            } else {
+              status = 'wrong-target';
             actualTarget = resolvedTarget;
             groups.wrongTarget.push({ source, target, actual: resolvedTarget });
           }

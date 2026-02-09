@@ -1,4 +1,4 @@
-import { lstat, readdir, mkdir, rename, symlink } from "node:fs/promises";
+import { lstat, readdir, mkdir, rename, symlink, cp, rm } from "node:fs/promises";
 import { dirname, basename, resolve } from "node:path";
 import { $ } from "bun";
 import { updateConfigLinks } from "./config";
@@ -202,7 +202,17 @@ export async function link(
   await mkdir(dirname(absoluteDest), { recursive: true });
 
   // Move file
-  await rename(absoluteTarget, absoluteDest);
+  try {
+    await rename(absoluteTarget, absoluteDest);
+  } catch (err: unknown) {
+    // Cross-device move (e.g., linking from external volume) can't be done with rename().
+    if (err instanceof Error && "code" in err && (err as any).code === "EXDEV") {
+      await cp(absoluteTarget, absoluteDest, { recursive: true });
+      await rm(absoluteTarget, { recursive: true, force: true });
+    } else {
+      throw err;
+    }
+  }
 
   // Create symlink
   await symlink(absoluteDest, absoluteTarget);
