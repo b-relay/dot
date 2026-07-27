@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import { isAbsolute } from "node:path";
-import type { Dependency, DotConfig, LinkMap } from "./types";
+import type { CustomPatterns, Dependency, DotConfig, LinkMap } from "./types";
 import { writeConfig } from "./config";
 import { promptBrewfileConfig } from "./brewfile-config";
 
@@ -37,6 +37,16 @@ async function confirm(message: string, initialValue: boolean): Promise<boolean>
 
 function uniq(arr: string[]): string[] {
   return Array.from(new Set(arr));
+}
+
+export function normalizeCustomPatterns(
+  lowValue: string[] | undefined,
+  highValue: string[] | undefined,
+): CustomPatterns | undefined {
+  const patterns: CustomPatterns = {};
+  if (lowValue?.length) patterns.lowValue = lowValue;
+  if (highValue?.length) patterns.highValue = highValue;
+  return Object.keys(patterns).length > 0 ? patterns : undefined;
 }
 
 function abbreviateSourceForDisplay(source: string, dotfilesPath: string): string {
@@ -455,15 +465,9 @@ export async function runConfigWizard(params: {
         const low = await editStringList("Custom low-value patterns", working.customPatterns?.lowValue);
         const high = await editStringList("Custom high-value patterns", working.customPatterns?.highValue);
         if (low.changed || high.changed) {
-          working.customPatterns = {
-            ...(working.customPatterns ?? {}),
-            ...(low.next ? { lowValue: low.next } : {}),
-            ...(high.next ? { highValue: high.next } : {}),
-          };
-          // If both end up undefined, clear customPatterns entirely.
-          if (!working.customPatterns.lowValue && !working.customPatterns.highValue) {
-            delete (working as any).customPatterns;
-          }
+          const customPatterns = normalizeCustomPatterns(low.next, high.next);
+          if (customPatterns) working.customPatterns = customPatterns;
+          else delete working.customPatterns;
           changed = true;
           changes.push("Updated custom patterns");
         }

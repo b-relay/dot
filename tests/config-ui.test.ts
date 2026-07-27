@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { convertEffectiveLinksToPortable } from "../src/config-ui";
+import {
+  convertEffectiveLinksToPortable,
+  normalizeCustomPatterns,
+} from "../src/config-ui";
 import { parseSyncArgs } from "../index";
 
 describe("convertEffectiveLinksToPortable", () => {
@@ -41,9 +44,21 @@ describe("convertEffectiveLinksToPortable", () => {
   });
 });
 
+describe("normalizeCustomPatterns", () => {
+  test("removes an emptied low-value list while preserving high-value patterns", () => {
+    expect(normalizeCustomPatterns(undefined, ["important"])).toEqual({
+      highValue: ["important"],
+    });
+  });
+});
+
 describe("parseSyncArgs", () => {
   test("accepts no args", () => {
     expect(parseSyncArgs([])).toEqual({ ok: true });
+  });
+
+  test("accepts the global --dotfiles option after sync", () => {
+    expect(parseSyncArgs(["--dotfiles", "/tmp/dotfiles"])).toEqual({ ok: true });
   });
 
   test("rejects legacy sync config positional", () => {
@@ -66,4 +81,3 @@ describe("parseSyncArgs", () => {
     expect(r.ok).toBe(false);
   });
 });
-

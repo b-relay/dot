@@ -235,8 +235,7 @@ function createConfig(dotfilesPath: string, links: LinkMap, home?: string): Conf
  * Get the path to the reviewed paths file.
  * Uses XDG Base Directory pattern: ~/.config/dot/reviewed.json
  */
-function getReviewedFilePath(): string {
-  const home = Bun.env.HOME;
+function getReviewedFilePath(home = Bun.env.HOME): string {
   if (!home) throw new Error("HOME environment variable not set");
   return `${home}/.config/dot/reviewed.json`;
 }
@@ -678,8 +677,9 @@ function printArchitectureStatus(architecture: 'arm64' | 'x86_64', issues: Hardc
 
 // --- End architecture detection helpers ---
 
-async function readReviewedPaths(): Promise<ReviewedPaths> {
-  const filePath = getReviewedFilePath();
+async function readReviewedPaths(
+  filePath = getReviewedFilePath(),
+): Promise<ReviewedPaths> {
   const file = Bun.file(filePath);
   if (await file.exists()) {
     try {
@@ -692,8 +692,10 @@ async function readReviewedPaths(): Promise<ReviewedPaths> {
   return {};
 }
 
-async function writeReviewedPaths(paths: ReviewedPaths): Promise<void> {
-  const filePath = getReviewedFilePath();
+async function writeReviewedPaths(
+  paths: ReviewedPaths,
+  filePath = getReviewedFilePath(),
+): Promise<void> {
   // Ensure parent directory exists
   await mkdir(dirname(filePath), { recursive: true });
   await Bun.write(filePath, JSON.stringify(paths, null, 2) + "\n");
@@ -1024,15 +1026,28 @@ export function filterBrewfile(output: string, exclude: string[] = ["vscode"]): 
  * We disallow configuration entrypoints here; config lives under `dot config`.
  */
 export function parseSyncArgs(syncArgs: string[]): { ok: true } | { ok: false; error: string } {
-  if (syncArgs.length === 0) return { ok: true };
+  const commandArgs: string[] = [];
+  for (let i = 0; i < syncArgs.length; i++) {
+    const arg = syncArgs[i]!;
+    if (arg === "--dotfiles") {
+      i++;
+      continue;
+    }
+    if (arg.startsWith("--dotfiles=")) {
+      continue;
+    }
+    commandArgs.push(arg);
+  }
+
+  if (commandArgs.length === 0) return { ok: true };
 
   // Disallow legacy entrypoints explicitly with a helpful message.
-  if (syncArgs.includes("--config") || syncArgs[0] === "config") {
+  if (commandArgs.includes("--config") || commandArgs[0] === "config") {
     return { ok: false, error: "Sync config has moved. Use: dot config brewfile" };
   }
 
   // Reject any other args (flags or positionals) for now to avoid silent no-ops.
-  const bad = syncArgs[0]!;
+  const bad = commandArgs[0]!;
   if (bad.startsWith("-")) {
     return { ok: false, error: `Unknown option for dot sync: ${bad}` };
   }
@@ -1298,10 +1313,11 @@ type Dotfile = {
 async function markAsReviewed(
   normalizedPath: string,
   entry: ReviewedEntry,
+  filePath = getReviewedFilePath(),
 ): Promise<void> {
-  const reviewed = await readReviewedPaths();
+  const reviewed = await readReviewedPaths(filePath);
   reviewed[normalizedPath] = entry;
-  await writeReviewedPaths(reviewed);
+  await writeReviewedPaths(reviewed, filePath);
 }
 
 type DoctorIgnoreOptions = {

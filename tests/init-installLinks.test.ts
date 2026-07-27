@@ -6,16 +6,12 @@ import { __test as initTest } from "../src/init";
 
 describe("init.installLinks", () => {
   let tmpDir: string;
-  let oldHome: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "dot-init-links-"));
-    oldHome = process.env.HOME;
-    process.env.HOME = tmpDir;
   });
 
   afterEach(async () => {
-    process.env.HOME = oldHome;
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -26,7 +22,7 @@ describe("init.installLinks", () => {
 
     await initTest.installLinks(
       {
-        "zsh/zshenv": "~/.zshenv",
+        "zsh/zshenv": resolve(tmpDir, ".zshenv"),
       },
       dotfilesPath,
     );
@@ -47,7 +43,7 @@ describe("init.installLinks", () => {
 
     await initTest.installLinks(
       {
-        "zsh/zshrc": "~/.zshrc",
+        "zsh/zshrc": resolve(tmpDir, ".zshrc"),
       },
       dotfilesPath,
     );
@@ -56,4 +52,3 @@ describe("init.installLinks", () => {
     expect(raw).toBe(resolve(dotfilesPath, "zsh/zshrc"));
   });
 });
-

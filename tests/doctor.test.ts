@@ -7,7 +7,6 @@ import {
   getLegacyLinks,
   getRepoFiles,
   getGitStatus,
-  getReviewedFilePath,
   __test,
   type Config,
   type ReviewedEntry,
@@ -32,36 +31,22 @@ async function initGitRepo(path: string): Promise<void> {
   await $`git -C ${path} init -b main`.quiet();
   await $`git -C ${path} config user.email "test@example.com"`.quiet();
   await $`git -C ${path} config user.name "Test User"`.quiet();
+  await $`git -C ${path} config commit.gpgsign false`.quiet();
 }
 
 // --- readReviewedPaths tests ---
-// Note: These tests use the XDG path (~/.config/dot/reviewed.json)
-// so they read/write to the actual config location
 
 describe("readReviewedPaths", () => {
-  let originalContent: string | null = null;
-  const reviewedFilePath = getReviewedFilePath();
+  let tmpDir: string;
+  let reviewedFilePath: string;
 
   beforeEach(async () => {
-    // Save existing content if any
-    try {
-      originalContent = await readFile(reviewedFilePath, "utf-8");
-    } catch {
-      originalContent = null;
-    }
+    tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-read-"));
+    reviewedFilePath = join(tmpDir, "reviewed.json");
   });
 
   afterEach(async () => {
-    // Restore original content
-    if (originalContent !== null) {
-      await writeFile(reviewedFilePath, originalContent);
-    } else {
-      try {
-        await rm(reviewedFilePath);
-      } catch {
-        // File doesn't exist, that's fine
-      }
-    }
+    await rm(tmpDir, { recursive: true });
   });
 
   test("returns empty object when file doesn't exist", async () => {
@@ -71,7 +56,7 @@ describe("readReviewedPaths", () => {
     } catch {
       // Doesn't exist, that's fine
     }
-    const result = await readReviewedPaths();
+    const result = await readReviewedPaths(reviewedFilePath);
     expect(result).toEqual({});
   });
 
@@ -81,19 +66,19 @@ describe("readReviewedPaths", () => {
       "/another/path": { type: 'forever' },
     };
     await writeFile(reviewedFilePath, JSON.stringify(data));
-    const result = await readReviewedPaths();
+    const result = await readReviewedPaths(reviewedFilePath);
     expect(result).toEqual(data);
   });
 
   test("returns empty object for corrupted JSON", async () => {
     await writeFile(reviewedFilePath, "{ invalid json }");
-    const result = await readReviewedPaths();
+    const result = await readReviewedPaths(reviewedFilePath);
     expect(result).toEqual({});
   });
 
   test("returns empty object for empty file", async () => {
     await writeFile(reviewedFilePath, "");
-    const result = await readReviewedPaths();
+    const result = await readReviewedPaths(reviewedFilePath);
     expect(result).toEqual({});
   });
 });
@@ -101,36 +86,23 @@ describe("readReviewedPaths", () => {
 // --- writeReviewedPaths tests ---
 
 describe("writeReviewedPaths", () => {
-  let originalContent: string | null = null;
-  const reviewedFilePath = getReviewedFilePath();
+  let tmpDir: string;
+  let reviewedFilePath: string;
 
   beforeEach(async () => {
-    // Save existing content if any
-    try {
-      originalContent = await readFile(reviewedFilePath, "utf-8");
-    } catch {
-      originalContent = null;
-    }
+    tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-write-"));
+    reviewedFilePath = join(tmpDir, "reviewed.json");
   });
 
   afterEach(async () => {
-    // Restore original content
-    if (originalContent !== null) {
-      await writeFile(reviewedFilePath, originalContent);
-    } else {
-      try {
-        await rm(reviewedFilePath);
-      } catch {
-        // File doesn't exist, that's fine
-      }
-    }
+    await rm(tmpDir, { recursive: true });
   });
 
   test("writes JSON with proper formatting", async () => {
     const data: ReviewedPaths = {
       "/path/to/file": { type: 'timed', expiresAt: '2024-06-20' },
     };
-    await writeReviewedPaths(data);
+    await writeReviewedPaths(data, reviewedFilePath);
 
     const content = await readFile(reviewedFilePath, "utf-8");
     // Should have 2-space indent and trailing newline
@@ -148,9 +120,9 @@ describe("writeReviewedPaths", () => {
     const data: ReviewedPaths = {
       "/new/path": { type: 'forever' },
     };
-    await writeReviewedPaths(data);
+    await writeReviewedPaths(data, reviewedFilePath);
 
-    const result = await readReviewedPaths();
+    const result = await readReviewedPaths(reviewedFilePath);
     expect(result).toEqual(data);
   });
 
@@ -162,10 +134,10 @@ describe("writeReviewedPaths", () => {
       "/new": { type: 'forever' },
     };
 
-    await writeReviewedPaths(oldData);
-    await writeReviewedPaths(newData);
+    await writeReviewedPaths(oldData, reviewedFilePath);
+    await writeReviewedPaths(newData, reviewedFilePath);
 
-    const result = await readReviewedPaths();
+    const result = await readReviewedPaths(reviewedFilePath);
     expect(result).toEqual(newData);
   });
 });
@@ -275,52 +247,33 @@ describe("getGitStatus", () => {
 // --- markAsReviewed tests ---
 
 describe("markAsReviewed", () => {
-  let originalContent: string | null = null;
-  const reviewedFilePath = getReviewedFilePath();
+  let tmpDir: string;
+  let reviewedFilePath: string;
 
   beforeEach(async () => {
-    // Save existing content if any
-    try {
-      originalContent = await readFile(reviewedFilePath, "utf-8");
-    } catch {
-      originalContent = null;
-    }
-    // Clear the file for a clean test
-    try {
-      await rm(reviewedFilePath);
-    } catch {
-      // Doesn't exist, that's fine
-    }
+    tmpDir = await mkdtemp(join(tmpdir(), "dot-reviewed-mark-"));
+    reviewedFilePath = join(tmpDir, "reviewed.json");
   });
 
   afterEach(async () => {
-    // Restore original content
-    if (originalContent !== null) {
-      await writeFile(reviewedFilePath, originalContent);
-    } else {
-      try {
-        await rm(reviewedFilePath);
-      } catch {
-        // File doesn't exist, that's fine
-      }
-    }
+    await rm(tmpDir, { recursive: true });
   });
 
   test("adds path with timed entry", async () => {
     const path = "/test/path/some-app";
     const entry: ReviewedEntry = { type: 'timed', expiresAt: '2024-06-20' };
-    await markAsReviewed(path, entry);
+    await markAsReviewed(path, entry, reviewedFilePath);
 
-    const reviewed = await readReviewedPaths();
+    const reviewed = await readReviewedPaths(reviewedFilePath);
     expect(reviewed[path]).toEqual(entry);
   });
 
   test("adds path with forever entry", async () => {
     const path = "/test/path/permanent-app";
     const entry: ReviewedEntry = { type: 'forever' };
-    await markAsReviewed(path, entry);
+    await markAsReviewed(path, entry, reviewedFilePath);
 
-    const reviewed = await readReviewedPaths();
+    const reviewed = await readReviewedPaths(reviewedFilePath);
     expect(reviewed[path]).toEqual(entry);
   });
 
@@ -329,10 +282,10 @@ describe("markAsReviewed", () => {
     const oldEntry: ReviewedEntry = { type: 'timed', expiresAt: '2020-01-01' };
     const newEntry: ReviewedEntry = { type: 'forever' };
 
-    await writeReviewedPaths({ [path]: oldEntry });
-    await markAsReviewed(path, newEntry);
+    await writeReviewedPaths({ [path]: oldEntry }, reviewedFilePath);
+    await markAsReviewed(path, newEntry, reviewedFilePath);
 
-    const reviewed = await readReviewedPaths();
+    const reviewed = await readReviewedPaths(reviewedFilePath);
     expect(reviewed[path]).toEqual(newEntry);
   });
 
@@ -342,10 +295,10 @@ describe("markAsReviewed", () => {
     const otherEntry: ReviewedEntry = { type: 'timed', expiresAt: '2024-01-01' };
     const newEntry: ReviewedEntry = { type: 'forever' };
 
-    await writeReviewedPaths({ [otherPath]: otherEntry });
-    await markAsReviewed(newPath, newEntry);
+    await writeReviewedPaths({ [otherPath]: otherEntry }, reviewedFilePath);
+    await markAsReviewed(newPath, newEntry, reviewedFilePath);
 
-    const reviewed = await readReviewedPaths();
+    const reviewed = await readReviewedPaths(reviewedFilePath);
     expect(reviewed[otherPath]).toEqual(otherEntry);  // Unchanged
     expect(reviewed[newPath]).toEqual(newEntry);      // Added
   });
