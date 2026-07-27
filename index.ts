@@ -11,7 +11,7 @@ import {
   stat,
 } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
-import { loadConfig, writeConfig, updateConfigLinks } from "./src/config";
+import { loadConfig, updateConfigLinks } from "./src/config";
 import { getDotfilesPath, loadState, saveState } from "./src/state";
 import { link, parseLinkArgs } from "./src/link";
 import type { LinkOptions } from "./src/link";
@@ -22,6 +22,8 @@ import type { MoveOptions } from "./src/move";
 import { update } from "./src/update";
 import type { DotConfig, LinkMap, DotState, Dependency, BrewfileConfig } from "./src/types";
 import { browseForPath, UserCancelledError } from "./src/wizard";
+import { EXCLUDE_DESCRIPTIONS } from "./src/brewfile-config";
+import { detectConfigFileKind, runBrewfileConfigFlow, runConfigWizard } from "./src/config-ui";
 import * as p from '@clack/prompts';
 
 const VERSION = "0.1.0";
@@ -233,8 +235,7 @@ function createConfig(dotfilesPath: string, links: LinkMap, home?: string): Conf
  * Get the path to the reviewed paths file.
  * Uses XDG Base Directory pattern: ~/.config/dot/reviewed.json
  */
-function getReviewedFilePath(): string {
-  const home = Bun.env.HOME;
+function getReviewedFilePath(home = Bun.env.HOME): string {
   if (!home) throw new Error("HOME environment variable not set");
   return `${home}/.config/dot/reviewed.json`;
 }
@@ -676,8 +677,9 @@ function printArchitectureStatus(architecture: 'arm64' | 'x86_64', issues: Hardc
 
 // --- End architecture detection helpers ---
 
-async function readReviewedPaths(): Promise<ReviewedPaths> {
-  const filePath = getReviewedFilePath();
+async function readReviewedPaths(
+  filePath = getReviewedFilePath(),
+): Promise<ReviewedPaths> {
   const file = Bun.file(filePath);
   if (await file.exists()) {
     try {
@@ -690,8 +692,10 @@ async function readReviewedPaths(): Promise<ReviewedPaths> {
   return {};
 }
 
-async function writeReviewedPaths(paths: ReviewedPaths): Promise<void> {
-  const filePath = getReviewedFilePath();
+async function writeReviewedPaths(
+  paths: ReviewedPaths,
+  filePath = getReviewedFilePath(),
+): Promise<void> {
   // Ensure parent directory exists
   await mkdir(dirname(filePath), { recursive: true });
   await Bun.write(filePath, JSON.stringify(paths, null, 2) + "\n");
@@ -1018,68 +1022,36 @@ export function filterBrewfile(output: string, exclude: string[] = ["vscode"]): 
 }
 
 /**
- * Human-readable descriptions for exclude types.
- * These match line prefixes in brew bundle dump output.
+ * Parse args after `dot sync`.
+ * We disallow configuration entrypoints here; config lives under `dot config`.
  */
-const EXCLUDE_DESCRIPTIONS: Record<string, string> = {
-  vscode: 'VS Code extensions (vscode "...")',
-  mas: 'Mac App Store apps (mas "...")',
-  whalebrew: 'Whalebrew containers (whalebrew "...")',
-};
-
-/**
- * Configure brewfile sync exclusions interactively
- */
-async function syncConfig(dotfilesPath: string, dotConfig: DotConfig): Promise<void> {
-  p.intro('dot sync config');
-
-  const currentExclude = dotConfig.brewfile?.exclude ?? ['vscode'];
-
-  p.log.info('Configure which package types to exclude from brewfile sync.');
-  console.log('');
-  console.log('  When running `dot sync`, these package types will be filtered out.');
-  console.log('  This is useful for packages managed outside of Homebrew.');
-  console.log('');
-
-  const options = Object.entries(EXCLUDE_DESCRIPTIONS).map(([value, desc]) => ({
-    value,
-    label: value,
-    hint: desc,
-  }));
-
-  const selected = await p.multiselect({
-    message: 'Select package types to exclude:',
-    options,
-    initialValues: currentExclude,
-    required: false,
-  });
-
-  if (p.isCancel(selected)) {
-    p.log.warn('Cancelled');
-    return;
+export function parseSyncArgs(syncArgs: string[]): { ok: true } | { ok: false; error: string } {
+  const commandArgs: string[] = [];
+  for (let i = 0; i < syncArgs.length; i++) {
+    const arg = syncArgs[i]!;
+    if (arg === "--dotfiles") {
+      i++;
+      continue;
+    }
+    if (arg.startsWith("--dotfiles=")) {
+      continue;
+    }
+    commandArgs.push(arg);
   }
 
-  const newExclude = selected as string[];
+  if (commandArgs.length === 0) return { ok: true };
 
-  // Update config
-  const newConfig: DotConfig = {
-    ...dotConfig,
-    brewfile: {
-      ...dotConfig.brewfile,
-      path: dotConfig.brewfile?.path ?? 'homebrew/brewfile',
-      exclude: newExclude,
-    },
-  };
-
-  await writeConfig(dotfilesPath, newConfig);
-
-  if (newExclude.length === 0) {
-    p.log.success('No exclusions configured - all packages will be included');
-  } else {
-    p.log.success(`Excluding: ${newExclude.join(', ')}`);
+  // Disallow legacy entrypoints explicitly with a helpful message.
+  if (commandArgs.includes("--config") || commandArgs[0] === "config") {
+    return { ok: false, error: "Sync config has moved. Use: dot config brewfile" };
   }
 
-  p.outro('Run `dot sync` to update your brewfile');
+  // Reject any other args (flags or positionals) for now to avoid silent no-ops.
+  const bad = commandArgs[0]!;
+  if (bad.startsWith("-")) {
+    return { ok: false, error: `Unknown option for dot sync: ${bad}` };
+  }
+  return { ok: false, error: `dot sync does not accept subcommands (got: ${bad}). Use: dot config brewfile` };
 }
 
 async function sync(config: Config, dotConfig: DotConfig) {
@@ -1093,10 +1065,10 @@ async function sync(config: Config, dotConfig: DotConfig) {
   if (exclude.length > 0) {
     const excludeList = exclude.map(e => EXCLUDE_DESCRIPTIONS[e] ? `${e}` : e).join(', ');
     p.log.info(`Excluding: ${excludeList}`);
-    console.log(`  Run 'dot sync config' to change exclusions`);
+    console.log("  Run 'dot config brewfile' to change settings");
   } else {
     p.log.info('No exclusions - including all packages');
-    console.log(`  Run 'dot sync config' to exclude package types`);
+    console.log("  Run 'dot config brewfile' to exclude package types");
   }
 
   const s = p.spinner();
@@ -1117,6 +1089,7 @@ async function sync(config: Config, dotConfig: DotConfig) {
 
   // Write filtered output
   const brewfilePath = `${config.dotfiles}/${relativePath}`;
+  await mkdir(dirname(brewfilePath), { recursive: true });
   await Bun.write(brewfilePath, filtered);
 
   s.stop('Brewfile updated');
@@ -1340,10 +1313,11 @@ type Dotfile = {
 async function markAsReviewed(
   normalizedPath: string,
   entry: ReviewedEntry,
+  filePath = getReviewedFilePath(),
 ): Promise<void> {
-  const reviewed = await readReviewedPaths();
+  const reviewed = await readReviewedPaths(filePath);
   reviewed[normalizedPath] = entry;
-  await writeReviewedPaths(reviewed);
+  await writeReviewedPaths(reviewed, filePath);
 }
 
 type DoctorIgnoreOptions = {
@@ -1580,7 +1554,7 @@ function help() {
   console.log("    --force, -f   Bypass dependency check");
   console.log("  uninstall       Remove symlinks");
   console.log("  sync            Update brewfile from installed packages");
-  console.log("  sync config     Configure which package types to exclude");
+  console.log("  config          Review and update dot settings");
   console.log(
     "  doctor          Analyze dotfiles with Claude and suggest fixes",
   );
@@ -1612,10 +1586,11 @@ async function main() {
   // parseArgs with allowPositionals will put the command in positionals
   const args = Bun.argv.slice(2);
   let command: string | undefined;
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
     if (!arg.startsWith("-") && !arg.startsWith("--")) {
       // Check if previous arg was --dotfiles (needs value)
-      const prevIdx = args.indexOf(arg) - 1;
+      const prevIdx = i - 1;
       if (prevIdx >= 0 && args[prevIdx] === "--dotfiles") {
         continue; // This is the value for --dotfiles, not the command
       }
@@ -1667,7 +1642,8 @@ async function main() {
     process.exit(1);
   }
 
-  const { dotfilesPath, config: dotConfig } = initResult;
+  const { dotfilesPath } = initResult;
+  let dotConfig = initResult.config;
   const config = createConfig(dotfilesPath, dotConfig.links);
 
   switch (command) {
@@ -1683,16 +1659,82 @@ async function main() {
     case "uninstall":
       await uninstall(config);
       break;
-    case "sync": {
-      // Check for subcommand
-      const syncIdx = args.indexOf("sync");
-      const syncSubcommand = syncIdx >= 0 ? args[syncIdx + 1] : undefined;
+    case "config": {
+      const configIdx = args.indexOf("config");
+      const configArgs = configIdx >= 0 ? args.slice(configIdx + 1) : [];
+      const sub = configArgs[0];
 
-      if (syncSubcommand === "config") {
-        await syncConfig(dotfilesPath, dotConfig);
+      let section: "brewfile" | "auto-commit" | "patterns" | "deps" | undefined;
+      if (sub === undefined) {
+        section = undefined;
+      } else if (sub === "brewfile") {
+        section = "brewfile";
+      } else if (sub === "auto-commit" || sub === "autocommit") {
+        section = "auto-commit";
+      } else if (sub === "patterns") {
+        section = "patterns";
+      } else if (sub === "deps" || sub === "dependencies") {
+        section = "deps";
       } else {
-        await sync(config, dotConfig);
+        console.error(`Unknown config section: ${sub}`);
+        console.error("Usage: dot config [brewfile|auto-commit|patterns|deps]");
+        process.exit(1);
       }
+
+      const home = Bun.env.HOME;
+      if (!home) throw new Error("HOME environment variable is not set");
+
+      const kind = await detectConfigFileKind(dotfilesPath);
+      await runConfigWizard({
+        dotfilesPath,
+        dotConfig,
+        home,
+        configFileKind: kind,
+        section,
+      });
+      break;
+    }
+    case "sync": {
+      // Check for flag/subcommand
+      const syncIdx = args.indexOf("sync");
+      const syncArgs = syncIdx >= 0 ? args.slice(syncIdx + 1) : [];
+
+      const parsed = parseSyncArgs(syncArgs);
+      if (!parsed.ok) {
+        console.error(parsed.error);
+        console.error("Use: dot config brewfile");
+        process.exit(1);
+      }
+
+      // If brewfile sync isn't configured yet, offer to configure on first sync.
+      if (!dotConfig.brewfile) {
+        const proceed = await p.confirm({
+          message: "Brewfile sync is not configured. Configure now?",
+          initialValue: true,
+        });
+        if (p.isCancel(proceed) || proceed === false) {
+          p.outro("Cancelled");
+          return;
+        }
+
+        const home = Bun.env.HOME;
+        if (!home) throw new Error("HOME environment variable is not set");
+        const kind = await detectConfigFileKind(dotfilesPath);
+        const r = await runBrewfileConfigFlow({
+          dotfilesPath,
+          dotConfig,
+          configFileKind: kind,
+          home,
+          intro: true,
+        });
+        if (r !== "written") {
+          // User cancelled or chose not to write; don't run sync.
+          return;
+        }
+        dotConfig = (await loadConfig(dotfilesPath)) ?? dotConfig;
+      }
+
+      await sync(config, dotConfig);
       break;
     }
     case "ignore": {

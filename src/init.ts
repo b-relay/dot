@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { mkdir, stat, rename, symlink, lstat, readlink } from "node:fs/promises";
+import { mkdir, stat, rename, symlink, lstat, readlink, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { loadState, saveState } from "./state";
 import { loadConfig, writeConfig } from "./config";
@@ -28,7 +28,8 @@ import {
   type DotfileStatus,
   type ConflictResolution,
 } from "./wizard";
-import type { DotConfig, LinkMap } from "./types";
+import { promptBrewfileConfig } from "./brewfile-config";
+import type { BrewfileConfig, DotConfig, LinkMap } from "./types";
 
 export type InitOptions = {
   from?: string;      // --from github.com/user/dotfiles
@@ -95,6 +96,17 @@ async function initGitRepo(path: string): Promise<boolean> {
   }
 }
 
+async function gitHasCommits(repoPath: string): Promise<boolean> {
+  const { exitCode } = await $`git -C ${repoPath} rev-parse --verify HEAD`.quiet().nothrow();
+  return exitCode === 0;
+}
+
+async function gitStatusPorcelain(repoPath: string): Promise<string | null> {
+  const res = await $`git -C ${repoPath} status --porcelain`.quiet().nothrow();
+  if (res.exitCode !== 0) return null;
+  return await $`git -C ${repoPath} status --porcelain`.text();
+}
+
 /**
  * Get list of real file conflicts for resolution.
  * Returns array of {source, target} pairs where target is a real file (not symlink).
@@ -155,11 +167,12 @@ async function getWrongTargets(
 /**
  * Execute symlink installation for given links
  */
-async function installLinks(links: LinkMap): Promise<void> {
+async function installLinks(links: LinkMap, dotfilesPath: string): Promise<void> {
   console.log("\nCreating symlinks...");
 
   for (const [source, target] of Object.entries(links)) {
     const expandedTarget = expandPath(target);
+    const absoluteSource = resolve(dotfilesPath, source);
 
     // Ensure parent directory exists
     await mkdir(dirname(expandedTarget), { recursive: true });
@@ -170,22 +183,32 @@ async function installLinks(links: LinkMap): Promise<void> {
       if (targetStat.isSymbolicLink()) {
         const linkTarget = await readlink(expandedTarget);
         const resolvedTarget = resolve(dirname(expandedTarget), linkTarget);
-        if (resolvedTarget === source) {
+        if (resolvedTarget === absoluteSource) {
           console.log(`  [skip] ${target} (already correct)`);
           continue;
         }
-        console.log(`  [warn] ${target} points elsewhere`);
+        // Replace wrong-target symlink. At this point the user has already confirmed
+        // creation/replacement in the init flow (and any "skip" choices were removed
+        // from the link map).
+        await unlink(expandedTarget);
+        if (!(await pathExists(absoluteSource))) {
+          console.log(`  [warn] ${target} skipped (source ${absoluteSource} does not exist)`);
+          continue;
+        }
+        await symlink(absoluteSource, expandedTarget);
+        console.log(`  [replace] ${target}`);
+        continue;
       } else {
         console.log(`  [warn] ${target} exists and is not a symlink`);
       }
     } catch {
       // Target doesn't exist, which is what we want
       // Check if source exists before creating symlink
-      if (!(await pathExists(source))) {
-        console.log(`  [warn] ${target} skipped (source ${source} does not exist)`);
+      if (!(await pathExists(absoluteSource))) {
+        console.log(`  [warn] ${target} skipped (source ${absoluteSource} does not exist)`);
         continue;
       }
-      await symlink(source, expandedTarget);
+      await symlink(absoluteSource, expandedTarget);
       console.log(`  [link] ${target}`);
     }
   }
@@ -624,21 +647,11 @@ async function initImpl(options: InitOptions): Promise<void> {
     // Ask about autoCommit
     const autoCommit = await confirm("Enable auto-commit when tracking new files?");
 
-    // Ask about brewfile exclusions
-    p.log.info("When running 'dot sync', some package types can be excluded from your brewfile.");
-    console.log("  Examples:");
-    console.log("    vscode - VS Code extensions (vscode \"extension-name\")");
-    console.log("    mas    - Mac App Store apps (mas \"Xcode\")");
-    console.log("");
-
-    const configureBrewfile = await confirm("Exclude VS Code extensions from brewfile sync?");
-
-    let brewfileConfig: { path: string; exclude: string[] } | undefined;
-    if (configureBrewfile) {
-      brewfileConfig = {
-        path: "homebrew/brewfile",
-        exclude: ["vscode"],
-      };
+    // Brewfile sync config (optional)
+    let brewfile: BrewfileConfig | undefined;
+    if (await confirm("Configure brewfile sync for `dot sync`?")) {
+      const cfg = await promptBrewfileConfig(undefined, { intro: false });
+      if (cfg) brewfile = cfg;
     }
 
     // Build links from selected + already-tracked dotfiles
@@ -647,7 +660,7 @@ async function initImpl(options: InitOptions): Promise<void> {
     config = {
       links,
       autoCommit,
-      ...(brewfileConfig && { brewfile: brewfileConfig }),
+      ...(brewfile && { brewfile }),
     };
 
     // Write config (only if applying)
@@ -661,20 +674,32 @@ async function initImpl(options: InitOptions): Promise<void> {
 
   // 6. Initialize git if needed
   if (shouldApply) {
+    const hadGitBefore = await pathExists(`${dotfilesPath}/.git`);
     await initGitRepo(dotfilesPath);
 
     // Check if there are uncommitted changes we should offer to commit
-    const { exitCode: statusCode } = await $`git -C ${dotfilesPath} status --porcelain`.quiet().nothrow();
-    if (statusCode === 0) {
-      const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
-      if (statusOutput.trim()) {
-        // If autoCommit is enabled, just commit. Otherwise ask.
-        const shouldCommit = config?.autoCommit ?? await confirm("Create initial commit?");
-        if (shouldCommit) {
-          await $`git -C ${dotfilesPath} add -A`.quiet();
-          await $`git -C ${dotfilesPath} commit -m "Initial commit via dot init"`.quiet();
-          p.log.success("Created initial commit");
+    const statusOutput = await gitStatusPorcelain(dotfilesPath);
+    if (statusOutput?.trim()) {
+      const hasCommits = await gitHasCommits(dotfilesPath);
+
+      // Only allow "auto commit" without prompting on a brand-new repo (no commits yet).
+      // If the repo already has commits (or existed before init), always prompt because the
+      // working tree could contain unrelated changes that init didn't create.
+      let shouldCommit = false;
+      if (!hasCommits) {
+        shouldCommit = (config?.autoCommit ?? false) || await confirm("Create initial commit?");
+      } else {
+        if (hadGitBefore) {
+          p.log.warn("Dotfiles repo already has commits; committing now may include unrelated changes.");
         }
+        shouldCommit = await confirm("Commit current changes via dot init?");
+      }
+
+      if (shouldCommit) {
+        const commitMessage = hasCommits ? "Commit changes via dot init" : "Initial commit via dot init";
+        await $`git -C ${dotfilesPath} add -A`.quiet();
+        await $`git -C ${dotfilesPath} commit -m ${commitMessage}`.quiet();
+        p.log.success(hasCommits ? "Committed changes" : "Created initial commit");
       }
     }
   } else {
@@ -798,13 +823,17 @@ async function initImpl(options: InitOptions): Promise<void> {
         }
 
         // Then create symlinks
-        await installLinks(config!.links);
+        await installLinks(config!.links, dotfilesPath);
 
         // Commit migrated files
         if (selectedDotfiles.length > 0) {
-          const statusOutput = await $`git -C ${dotfilesPath} status --porcelain`.text();
-          if (statusOutput.trim()) {
-            const shouldCommit = config!.autoCommit || await confirm("Commit migrated files?");
+          const statusOutput = await gitStatusPorcelain(dotfilesPath);
+          if (statusOutput?.trim()) {
+            const hasCommits = await gitHasCommits(dotfilesPath);
+            const shouldCommit = hasCommits
+              ? await confirm("Commit changes (including migrated files)?")
+              : (config!.autoCommit || await confirm("Commit migrated files?"));
+
             if (shouldCommit) {
               await $`git -C ${dotfilesPath} add -A`.quiet();
               await $`git -C ${dotfilesPath} commit -m "Add migrated dotfiles via dot init"`.quiet();
@@ -852,3 +881,8 @@ export function parseInitArgs(args: string[]): InitOptions {
 
   return options;
 }
+
+// Internal test exports - not part of public API
+export const __test = {
+  installLinks,
+};

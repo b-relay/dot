@@ -126,7 +126,7 @@ describe("getActiveReviewed", () => {
         super();
         return now;
       }
-      static now() { return now.getTime(); }
+      static override now() { return now.getTime(); }
     } as any;
 
     try {
@@ -153,7 +153,7 @@ describe("getActiveReviewed", () => {
         super();
         return now;
       }
-      static now() { return now.getTime(); }
+      static override now() { return now.getTime(); }
     } as any;
 
     try {
@@ -177,7 +177,7 @@ describe("getActiveReviewed", () => {
         super();
         return now;
       }
-      static now() { return now.getTime(); }
+      static override now() { return now.getTime(); }
     } as any;
 
     try {
@@ -205,7 +205,7 @@ describe("getExpiredPaths", () => {
         super();
         return now;
       }
-      static now() { return now.getTime(); }
+      static override now() { return now.getTime(); }
     } as any;
 
     try {
@@ -233,7 +233,7 @@ describe("getExpiredPaths", () => {
         super();
         return now;
       }
-      static now() { return now.getTime(); }
+      static override now() { return now.getTime(); }
     } as any;
 
     try {

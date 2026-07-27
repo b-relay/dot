@@ -191,18 +191,47 @@ export async function move(
   const s = p.spinner();
   s.start("Moving symlink...");
 
-  // Remove old symlink
+  // Create parent directory if needed
+  await mkdir(dirname(newTarget), { recursive: true });
+
+  // If destination exists, handle safely before touching the current symlink.
+  try {
+    const st = await lstat(newTarget);
+    if (st.isSymbolicLink()) {
+      await unlink(newTarget);
+    } else {
+      // Real file/dir exists at destination.
+      if (!options.force) {
+        const choice = await p.select({
+          message: `${newTarget.replace(home, "~")} exists (not a symlink)`,
+          options: [
+            { value: "backup", label: "Backup and replace", hint: "rename existing to .backup-<timestamp>" },
+            { value: "cancel", label: "Cancel" },
+          ],
+        });
+        if (p.isCancel(choice) || choice === "cancel") {
+          s.stop("Cancelled");
+          return;
+        }
+      }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const backupPath = `${newTarget}.backup-${timestamp}`;
+      await rename(newTarget, backupPath);
+    }
+  } catch {
+    // newTarget doesn't exist, good
+  }
+
+  // Create new symlink (now safe to proceed)
+  await symlink(repoFile, newTarget);
+
+  // Remove old symlink after new is in place
   try {
     await unlink(currentTarget);
   } catch {
     // Might not exist
   }
-
-  // Create parent directory if needed
-  await mkdir(dirname(newTarget), { recursive: true });
-
-  // Create new symlink
-  await symlink(repoFile, newTarget);
 
   // Update config
   const newTargetForConfig = newTarget.startsWith(home)
